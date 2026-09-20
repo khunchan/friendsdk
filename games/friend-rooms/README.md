@@ -7,7 +7,7 @@ unique number from 1 to 100 and the highest number wins.
 **Everything is simulated.** Prices, balances and prizes use the SDK preview ledger; the table fee and its burn are a labeled model.
 Nothing is sent on-chain. An owned Generations NFT is still required; the SDK runtime checks it.
 
-**Playable preview:** https://khunchan.github.io/friendsdk/ (a static build from commit `903e887`). You need a browser wallet holding a hardwired Rare Friends
+**Playable preview:** https://khunchan.github.io/friendsdk/ (a static build from commit `b44a4b5`). You need a browser wallet holding a hardwired Rare Friends
 Generations NFT (generation 1 or higher) on Robinhood mainnet; the SDK verifies ownership before play. Everything is
 simulated, so no RF, private key or transaction signature is needed. The SDK panel says "Local preview": that is the SDK's
 label for its simulated mode. The Rare Friends team [welcomed this hosted preview](https://github.com/spokesz/rarefriends-vibeathon/pull/7#issuecomment-5748019728).
