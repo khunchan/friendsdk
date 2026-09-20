@@ -31,7 +31,8 @@ try {
   server = createGameServer(build.outdir);
   await new Promise(done => server.listen(0, '127.0.0.1', done));
   const origin = `http://127.0.0.1:${server.address().port}`;
-  browser = await chromium.launch({ headless: true });
+  // Grayscale text smoothing keeps coloured fringes out of the black-and-white images.
+  browser = await chromium.launch({ headless: true, args: ['--disable-lcd-text'] });
   const page = await (await browser.newContext({ viewport: { width: 1100, height: 800 } })).newPage();
   await installFixture(page, origin, { artworkCall });
   // The fixture pins every preview roll to a loss. Queue the rolls for this session: a loss, a win (roll 500 is inside the
