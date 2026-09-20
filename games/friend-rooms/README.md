@@ -212,14 +212,22 @@ falls in proportion to the number of players who share the costs of a round. The
 round needs grows as the ticket gets smaller:
 
 ```text
-minimum players in a round = round costs / (10% x ticket x RF price)
+minimum players in a round = round costs / (10% x ticket x RF price), rounded up and never below 2
 ```
 
-*Estimate, with the same inputs as above.* At the 100 RF level a round needs at least about 4 players for the fees to cover
-the costs: 4 x 10 RF = 40 RF, about $0.125, against about $0.10 of costs. Three players give about $0.094 and two players
-about $0.063, so smaller rounds do not start and wait for the next timer. That follows directly from the rule that a round
-should not start when its costs exceed the fees. From 1,000 RF up, two players are enough (2 x 100 RF = 200 RF, about $0.63).
-So 100 RF is the lowest stake level that works with only a handful of players, which is why it is the working door.
+Minimum players per round (estimate, with the same inputs as above):
+
+| Stake level | Minimum players | Table fees at that size | Burned after costs |
+| ---: | ---: | ---: | ---: |
+| 100 RF | about 4 | 4 x 10 RF = 40 RF, about $0.125 | about 20% |
+| 1,000 RF | 2 | 2 x 100 RF = 200 RF, about $0.63 | about 84% |
+| 10,000 RF | 2 | 2 x 1,000 RF = 2,000 RF, about $6.27 | about 98% |
+| 100,000 RF | 2 | 2 x 10,000 RF = 20,000 RF, about $62.72 | about 100% |
+
+At 100 RF three players give only about $0.094 against about $0.10 of costs, and two give about $0.063. A duel of two players
+pays for itself from a ticket of about 160 RF. Rounds smaller than the minimum do not start and wait for the next timer. That
+follows directly from the rule that a round should not start when its costs exceed the fees. So 100 RF is the lowest stake
+level that works with only a handful of players, which is why it is the working door.
 
 Protections a future contract should have: the RF/ETH rate comes from a time-weighted average price (TWAP) of a pool, not the
 spot price; a round does not start when its costs are above a threshold; and the minimum denomination is a configurable
