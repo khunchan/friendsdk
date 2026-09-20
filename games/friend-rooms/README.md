@@ -4,7 +4,7 @@ SDK version **v0.1**. Your Rare Friend walks through a black-and-white isometric
 room door. Behind the working door, ten seats share one table: your Friend and nine simulated bots. Every seat draws a
 unique number from 1 to 100 and the highest number wins.
 
-**Everything is simulated.** Prices, balances and prizes use the SDK preview ledger; the table fee and its burn are a labelled model.
+**Everything is simulated.** Prices, balances and prizes use the SDK preview ledger; the table fee and its burn are a labeled model.
 Nothing is sent on-chain. An owned Generations NFT is still required; the SDK runtime checks it.
 
 **Playable preview:** https://khunchan.github.io/friendsdk/ (a static build from commit `903e887`). You need a browser wallet holding a hardwired Rare Friends
@@ -63,7 +63,7 @@ the odds and amounts are the same either way. SDK v0.1 does not burn RF: the who
 as game backing, and the SDK pays the 9 RF prize from it. The menus and the receipt label the fee "burned in the model"
 because it models a future room contract. Bot tickets and bot fees are simulated too.
 
-## Measured behaviour
+## Measured behavior
 
 The check plays tickets through the SDK preview client (`createGamePreview`, batches of 99 like the runtime bridge),
 settles every play, redeems every win and confirms that the SDK ledger adds up. Each settled play also deals a table
@@ -88,63 +88,99 @@ randomness). `table.test.mjs` pins the seeded numbers above, so this section can
 ## Future SDK support
 
 Friend Rooms is a preview. A real version needs SDK capabilities that do not exist in v0.1. Nothing in this game
-pretends otherwise: every amount is labelled SIMULATED and the locked doors say so.
+pretends otherwise: every amount is labeled SIMULATED and the locked doors say so.
 
 | Needed capability | Why | In this preview |
 | --- | --- | --- |
-| Shared rooms with real players | Seats filled by other owners' Friends | Nine simulated bots |
+| Shared rooms with real players | Table seats filled by other owners' Friends | Nine simulated bots |
 | Several ticket tiers (Room 100 / 1,000 / 10,000 / 100,000 RF) | Different stakes | One ticket type; the locked doors show the plan |
-| A room contract with one allowance | Approve once, then join rooms without a prompt each time | Preview ledger; the SDK asks to confirm buy and use |
-| A keeper bot and unattended settlement | Start a round when the room is full, without a player click | The player's own client settles |
-| One Dice randomness per round | A single random value seeds the shuffle for every player | Browser randomness; numbers are dealt to match the SDK result |
-| A table fee separated from the pot at entry | Each ticket is split when a player joins: the pot share goes to the pot and the fee is set aside. The pot of a room that never fills can then be refunded in full | Shown in the menus and the receipt only |
-| Gas and randomness paid from the table fee | Players pay only the ticket | Not modelled |
-| Burning the remainder of the fee at once | The fee pays the round's costs first and the rest is burned immediately, not at the end | A labelled model, not executed |
-| Reading shared room state from game code | Occupants and how full a room is | Not available |
-| Larger rooms | 100 seats; winners = ceil(participants / 10): 1-10 players give 1 winner, 11-20 give 2, and so on up to 91-100 giving 10; each ticket carries a 10% table fee (burned) and the pot, the other 90%, is shared equally between the winners | Ten seats and one winner |
+| A room contract with one allowance | Approve once, then sign up for rounds without a prompt each time | Preview ledger; the SDK asks to confirm buy and use |
+| A round timer, a keeper bot and unattended settlement | Rounds start on a timer (for example once a minute), not when a hall fills. A keeper settles every table of the round without a player click | The player's own client settles; the table is always full |
+| Seating at tables of 2 to 10 | Everyone who signed up in time is seated at tables of up to 10. A table needs at least 2 players; a player left alone waits for the next round or gets the whole ticket back | One table of 10 with 9 bots |
+| One Dice randomness per round | A single random value, used in a single transaction, gives the numbers of every table in the round | Browser randomness; numbers are dealt to match the SDK result |
+| A table fee separated from the pot at entry | Each ticket is split when a player signs up: the pot share goes to the pot and the fee is set aside. A player left without an opponent gets the whole ticket back | Shown in the menus and the receipt only |
+| Gas and randomness paid from the table fees | Players pay only the ticket; the costs of a round are shared by all its players | Not modeled |
+| Burning the remainder of the fees at once | The fees pay the round's costs first and the rest is burned immediately, not at the end | A labeled model, not executed |
+| Reading shared round state from game code | Who has signed up, the tables and their results | Not available |
+| A choice of table size (optional) | A duel (2 players) or a full table (10): the same 90% average return, a different risk | One table size |
+| Tournaments | Special events with an NFT prize: a bracket of tables of 10 whose winners meet at a final table of 10 real Friends. Needs wearable NFTs, NFT prizes and tournament contracts | Not available |
 | A preview wallet larger than 20 RF | Play a real 100 RF ticket | The room runs at 1/100 scale |
 | Friend traits as a style source | Scenery, Floor and Generation could style the hall | One hall (Circuit Courtyard) for every Friend |
 
 ### How real Friends join rooms
 
-In this preview every neighbour is a bot. In a future version:
+In this preview every neighbor is a bot. In a future version a room is played in rounds, and a round is made of tables. (In
+this preview a "round" is one game with one ticket; below, a round is one timer-started batch of tables.)
 
-1. **The room lives in a contract.** The contract holds the seat queue and how full each room is.
-2. **Players join with one allowance.** A player approves RF once; joining a room then takes one transaction.
-3. **A keeper starts the round.** Anyone can act as keeper. When the room is full, the keeper asks Dice for one random
-   value for the whole round.
-4. **The shuffle comes from that one value.** Every seat's number is derived from it, so every client can recompute it.
-5. **Each player's client reads the result from the chain** and draws the real participants with their canonical Friend
-   sprites, at the same scale as the Friend at the table today.
+1. **The unit of play is a table of up to 10 seats.** The rooms (100, 1,000, 10,000 and 100,000 RF) are stake levels, not
+   sizes. A player sees only their own table, with neighbors at the scale of today's table, and the numbers of that table
+   open exactly as in this preview. One screen cannot hold 100 Friends, and opening 100 numbers one by one would take far
+   too long.
+2. **The room lives in a contract.** It holds the list of players who signed up for the next round and the results of past
+   rounds.
+3. **Players sign up with one allowance.** A player approves RF once; signing up then takes one transaction. The ticket is
+   split at entry: 0.9 of it goes into the pot and 0.1 is the table fee.
+4. **Rounds run on a timer,** for example once a minute, not when a hall fills. Everyone who signed up in time is seated at
+   tables of up to 10. A table needs at least 2 players: a player left alone waits for the next round or gets the whole
+   ticket back.
+5. **Any table of n players (2 to 10) works the same way.** Its pot is n x 0.9 x ticket and the highest number takes it, so
+   every player has a 1/n chance and the average return is 90%. The player could also choose the table size: a duel (2) and
+   a full table (10) have the same average return but different risk.
+6. **One keeper transaction and one Dice randomness per round.** Anyone can act as keeper. The keeper asks Dice for one
+   random value and settles every table of the round in one transaction. Each table's numbers are derived from that value,
+   so every client can recompute them, and the costs are shared by all players of the round.
+7. **Each player's client reads the result of their own table from the chain** and draws its real participants with their
+   canonical Friend sprites.
+
+**Why rounds on a timer.** At launch there will be few players. A room that waits for a full hall would stay empty, while a
+timer runs a round with whoever has signed up, even two players. Nobody waits for a crowd, and liquidity can build up
+gradually.
 
 A contract is better than a separate server because fairness can be checked on-chain. No operator can pick the winners, hold
-the pot or replay a round, and anyone can recompute the shuffle from the published randomness. If a keeper goes offline,
-another one can start the round. What the SDK lacks for this: reading shared room state from game code, multiplayer room
-contracts, and unattended settlement.
+the pots or replay a round, and anyone can recompute every table from the published randomness. If a keeper goes offline,
+another one can start the round. What the SDK lacks for this: reading shared round state from game code, multiplayer room
+contracts, and timers with unattended settlement.
+
+### Tournaments
+
+Large rooms are needed only for tournaments: special events with an NFT prize, for example a wearable inventory item for a
+Friend.
+
+- **A bracket of the same tables of 10.** 100 entrants play 10 qualifying tables. The 10 table winners sit at a final table
+  of 10, and the winner of the final gets the NFT. 1,000 entrants take three stages: 100 tables, then 10 tables, then the
+  final.
+- **Every player always sees one table of 10.** The final table is a shared show with 10 real Friends.
+- **The entry fee is paid in RF.** Part of it is burned and part goes to the prize.
+- **What the SDK lacks:** wearable NFTs, NFT prizes and tournament contracts. None of them exists in v0.1.
 
 ### Minimum ticket size (estimate)
 
-Prices for ETH and RF move a lot, so the rule is a formula, not a fixed number. A room is viable while its round costs are
-no more than its table fees:
+Prices for ETH and RF move a lot, so the rule is a formula, not a fixed number. A round is viable while its costs are no more
+than its table fees:
 
 ```text
 round costs (USD) = (gas + RNG fee, in ETH) x ETH price
-table fees  (USD) = 10% x seats x ticket (RF) x RF price
+table fees  (USD) = 10% x players in the round x ticket (RF) x RF price
 viable when round costs <= table fees, so
-minimum ticket (RF) = round costs / (10% x seats x RF price)
+minimum ticket (RF) = round costs / (10% x players in the round x RF price)
 ```
 
-Fee model: the 10% table fee is separated from the pot when a player joins. It pays the actual costs of the round (gas and
-randomness) first, and whatever is left is burned immediately. The pot is never touched, so the pot of a room that does not
-fill can be refunded in full. If costs exceed the fees, the round should not start.
+All tables of a round are settled in one transaction with one Dice randomness, so the costs are shared by every player of the
+round, not only by the players of one table.
+
+Fee model: the 10% table fee is separated from the pot when a player signs up. It pays the actual costs of the round (gas and
+randomness) first, and whatever is left is burned immediately. The pot is never touched, and a player left without an
+opponent gets the whole ticket back. If costs exceed the fees, the round should not start and its players wait for the next
+one.
 
 *Estimate as of 2026-09-20. Inputs: ETH about $2,450 and 100,000 RF about 0.128 ETH (a community tracker, not independently
 verified), so 1 RF is about $0.0031. The SDK caps a Dice request at 0.000025 ETH (about $0.06); gas is an assumption, and
-round costs are taken as about $0.10 in total. Rare Friends plans to subsidize randomness costs, which would lower this.*
+round costs are taken as about $0.10 in total. Rare Friends plans to subsidize randomness costs, which would lower this.
+Settling many tables in one transaction adds some gas, so the real cost of a large round would need to be measured.*
 
-With 10 seats:
+With 10 players in the round (one table):
 
-| Ticket | Paid in by 10 seats | Table fees (10%) | Fees / costs | Burned after costs |
+| Ticket | Paid in by 10 players | Table fees (10%) | Fees / costs | Burned after costs |
 | ---: | ---: | ---: | ---: | ---: |
 | 1 RF | $0.03 | $0.003 | 0.03x, not viable | none |
 | 10 RF | $0.31 | $0.031 | 0.31x, not viable | none |
@@ -153,8 +189,9 @@ With 10 seats:
 | 10,000 RF | $313.60 | $31.36 | 314x | about 100% |
 | 100,000 RF | $3,136 | $313.60 | 3,136x | about 100% |
 
-At 10 seats the minimum is about 32 RF, so 100 RF is the smallest listed room that works. A 100-seat room needs about a tenth
-of that (about 3 RF). That is why the working door is Room 100 RF.
+With 10 players in the round the minimum is about 32 RF, so 100 RF is the smallest listed room that works. The minimum
+falls in proportion to the number of players who share the costs of a round. That is why the working door is Room 100 RF:
+it stays viable even when a round has only 10 players.
 
 Protections a future contract should have: the RF/ETH rate comes from a time-weighted average price (TWAP) of a pool, not the
 spot price; a round does not start when its costs are above a threshold; and the minimum denomination is a configurable
