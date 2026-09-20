@@ -112,15 +112,15 @@ try {
     const range = child.getByLabel('Games to play');
     assert.equal(await range.getAttribute('max'), '11', 'The SDK prize backing limits one run to 11 games');
     await range.fill('3');
-    await child.getByText(/^3 games · 3 RF, including 0\.3 RF table fee \(burned in the model\)\. SIMULATED\. You confirm two SDK prompts/).waitFor();
+    await child.getByText(/^3 games · 3 RF, including 0\.3 RF table fee \(burned in the model\)\. All amounts are SIMULATED\. You confirm two SDK prompts/).waitFor();
     await child.getByText('Each 1 RF ticket splits at entry: 0.9 RF goes into the pot and 0.1 RF is a table fee (burned in the model).', { exact: true }).waitFor();
     await child.getByText('The pot is 9 RF. The highest number takes all of it.', { exact: true }).waitFor();
     await button('Play 3 games · 3 RF').click();
     await confirm(); await confirm();
-    // The receipt never opens by itself: the last round stays visible until the player asks for it.
+    // The receipt never opens by itself: the last game stays visible until the player asks for it.
     await button('Session receipt').waitFor();
     await page.waitForTimeout(400);
-    assert.equal(await child.getByRole('dialog').count(), 0, 'The receipt does not cover the last round');
+    assert.equal(await child.getByRole('dialog').count(), 0, 'The receipt does not cover the last game');
     await button('Session receipt').click();
     await child.getByRole('heading', { name: 'Session receipt' }).waitFor({ timeout: 5000 });
     assert.equal(await receiptRow('Games played'), '3');
@@ -148,22 +148,22 @@ try {
     // The table has the same small sound button in its HUD.
     await hudSound('Sound: off — turn on').click(); await hudSound('Sound: on — turn off').click(); await hudSound('Sound: off — turn on').waitFor();
 
-    // Stop after one round: the rest stay unfinished, then Resume settles those same plays without buying more tickets.
+    // Stop after one game: the rest stay unfinished, then Resume settles those same plays without buying more tickets.
     await button('Back to the hall').click(); await worldReady();
     await button('Settings').click(); await child.getByLabel('Reduce motion').uncheck(); await button('Close Settings').click();
     await child.getByRole('button', { name: /^Room 100 RF/ }).click();
     await child.getByLabel('Games to play').fill('3');
     await button('Play 3 games · 3 RF').click(); await confirm(); await confirm();
     if (shots) { await page.waitForTimeout(3200); await page.screenshot({ path: join(shots, `reveal-${width}.png`) }); await barClear(child); }
-    await button('Stop after this round').click();
-    await button('Resume 2 unfinished rounds').waitFor({ timeout: 15000 });
+    await button('Stop after this game').click();
+    await button('Resume 2 unfinished games').waitFor({ timeout: 15000 });
     assert.equal(await child.getByRole('dialog').count(), 0, 'Stopping does not open the receipt by itself');
     await button('Session receipt').click();
     await child.getByRole('heading', { name: 'Session receipt' }).waitFor({ timeout: 5000 });
     assert.equal(await receiptRow('Games played'), '4');
     await button('Close').click();
     assert.equal(await page.getByRole('button', { name: 'Confirm preview', exact: true }).count(), 0);
-    await button('Resume 2 unfinished rounds').click();
+    await button('Resume 2 unfinished games').click();
     await button('Back to the hall').waitFor({ timeout: 15000 });
     await button('Session receipt').click();
     await child.getByRole('heading', { name: 'Session receipt' }).waitFor({ timeout: 5000 });

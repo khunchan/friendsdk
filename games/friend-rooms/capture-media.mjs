@@ -86,12 +86,12 @@ try {
   await page.waitForTimeout(400);
   grabbing = false; await grabber;
 
-  const round = number => grabbed.filter(frame => frame.title.includes(`round ${number} of 3`));
+  const round = number => grabbed.filter(frame => frame.title.includes(`game ${number} of 3`));
   const reveal = round(1).find(frame => frame.opened >= 5 && !frame.result.startsWith('Your'));
   assert(reveal, 'A frame in the middle of a reveal was captured');
   await writeFile(join(work, 'raw', 'reveal.png'), reveal.buffer);
   const winning = round(2), finished = winning.filter(frame => frame.result.includes('highest'));
-  assert(finished.length > 2, 'The winning round was captured');
+  assert(finished.length > 2, 'The winning game was captured');
   const winFrame = finished[Math.min(finished.length - 1, Math.max(1, Math.floor(finished.length / 3)))];
   assert.match(winFrame.result, /^Your \d+ is the highest number\.$/);
   await writeFile(join(work, 'raw', 'win.png'), winFrame.buffer);

@@ -14,9 +14,9 @@ label for its simulated mode. The Rare Friends team [welcomed this hosted previe
 
 ## Screenshots
 
-![One round: the numbers open one by one, bots from the lowest up and the Friend last, then a win with HIGHEST! and +9 RF SIMULATED](media/round.gif)
+![One game: the numbers open one by one, bots from the lowest up and the Friend last, then a win with HIGHEST! and +9 RF SIMULATED](media/round.gif)
 
-*One round, played at x1 speed: bots open from the lowest number up, the Friend's number opens last, then the win.*
+*One game, played at x1 speed: bots open from the lowest number up, the Friend's number opens last, then the win.*
 
 | Hall with the working door and three locked doors | Table during the reveal (closed plates show ?) |
 | --- | --- |
@@ -33,8 +33,8 @@ simulated. Regenerate them with `node games/friend-rooms/capture-media.mjs` (nee
 - Move with WASD, the arrow keys, or tap/click a destination. Walk to a door and press E (or tap its label).
 - The **Room 100 RF** door opens the room menu. Choose how many games to play, then confirm the SDK prompts:
   one to buy the tickets and one to use them. Your Friend then plays every game on its own.
-- Use **Stop after this round** to pause a run. Unfinished rounds stay with your Friend; **Resume** settles those
-  same rounds and never buys or uses another ticket.
+- Use **Stop after this game** to pause a run. Unfinished games stay with your Friend; **Resume** settles those
+  same games and never buys or uses another ticket.
 - Winnings wait in your inventory until you press **Collect winnings** (one more SDK prompt).
 - Sound is off by default. The small **Sound** button in the top bar (in the hall and at the table) and the button in Settings turn it on and off; each says whether sound is on or off and what pressing it does. Settings also has reduce motion, which is also read from your system setting.
 - The three other doors (Room 1,000 / 10,000 / 100,000 RF) are locked: they need future SDK support.
@@ -54,7 +54,7 @@ simulated. Regenerate them with `node games/friend-rooms/capture-media.mjs` (nee
 | Backing | Each ticket reserves 9 RF of prize backing, so one run is limited to 11 games in the SDK preview |
 | Redemption | Fixed value, no expiry, paid to the selected Friend's wallet in a future approved integration |
 
-**The SDK result decides your outcome.** After each round the SDK settles the ticket. The table is then dealt to match it:
+**The SDK result decides your outcome.** After each game the SDK settles the ticket. The table is then dealt to match it:
 a win gives your Friend the highest number, a loss gives it one of the lower numbers, chosen evenly. Because one table
 seat in ten wins, this matches the 10% chance in `game.json`. The numbers and bots are presentation only.
 
@@ -85,7 +85,24 @@ your Friend's own fees were 0.1 RF per game, 1,000 RF. These fees are a model; t
 Reproduce it from the SDK root: `node games/friend-rooms/simulate.mjs 10000 20260920` (leave out the seed to use the SDK's
 randomness). `table.test.mjs` pins the seeded numbers above, so this section cannot drift from the code.
 
+## Design decisions
+
+- **Scale 1/100.** The SDK preview wallet is fixed at 20 RF, so "Room 100 RF" is played with 1 RF tickets. The ratios (a 10% table fee, a 9x prize) are the same as at full size.
+- **The fee is separated at entry.** Each ticket splits into 0.9 RF for the pot and 0.1 RF for the table fee. The pot is known in full from the start, and in a future contract the fee pays the costs of a round before the rest is burned. Odds and amounts are the same as taking 10% at the end.
+- **Bots are tokens, not Friends.** Neighbors are plain round tokens marked SIMULATED, so no Friend artwork is faked. In a real room they would be real Friends at the same scale.
+- **Burn example (estimate).** At the 100 RF level a table of 10 players pays 100 RF in table fees. If the costs of that round are about $0.10 (about 32 RF at the estimated prices below), about 68 RF per table is burned, so 1,000 such tables burn about 68,000 RF. Estimate as of 2026-09-20; see "Minimum ticket size".
+- **A tournament prize is always covered.** A tournament starts only with a minimum number of entrants, or its prize grows with the number of entry fees paid, so the prize never depends on money that has not come in.
+- **Several accounts give no edge.** Sitting at a duel table against yourself is pointless: both seats have equal chances and the table fee is paid anyway. Every ticket keeps the same 90% average return, so extra accounts cannot beat the table.
+
 ## Future SDK support
+
+**Roadmap in five steps**
+
+1. **Duel:** two real players at one table of 2 (needs shared rooms and a room contract).
+2. **Rounds on a timer:** tables of 2 to 10 for whoever has signed up, with one keeper transaction and one Dice randomness per round.
+3. **Stake levels:** the locked doors, Room 1,000 / 10,000 / 100,000 RF, become playable.
+4. **Tournaments with an NFT prize:** a bracket of tables of 10 ending in a final table (needs wearable NFTs and NFT prizes).
+5. **A Friend's own world as style:** the hall takes its look from the selected Friend's Scenery and Floor.
 
 Friend Rooms is a preview. A real version needs SDK capabilities that do not exist in v0.1. Nothing in this game
 pretends otherwise: every amount is labeled SIMULATED and the locked doors say so.
@@ -110,7 +127,7 @@ pretends otherwise: every amount is labeled SIMULATED and the locked doors say s
 ### How real Friends join rooms
 
 In this preview every neighbor is a bot. In a future version a room is played in rounds, and a round is made of tables. (In
-this preview a "round" is one game with one ticket; below, a round is one timer-started batch of tables.)
+this preview one ticket is one "game"; below, a "round" is one timer-started batch of tables.)
 
 1. **The unit of play is a table of up to 10 seats.** The rooms (100, 1,000, 10,000 and 100,000 RF) are stake levels, not
    sizes. A player sees only their own table, with neighbors at the scale of today's table, and the numbers of that table

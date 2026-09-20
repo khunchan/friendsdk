@@ -166,7 +166,7 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
     setRevealed(SEATS);
   }
 
-  /** Settle each round with the SDK, then deal a table that matches its result and open it. */
+  /** Settle each game with the SDK, then deal a table that matches its result and open it. */
   async function playRounds(ids: readonly bigint[], version: number) {
     stop.current = false; skip.current = false; setStopping(false); setSkipping(false);
     setScreen("room"); setVisited(true); setPhase("playing"); setRound(null); setRevealed(0);
@@ -179,7 +179,7 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
         const result = await client.settle(id);
         if (version !== epoch.current) return;
         const outcome = result.outcomeId === null ? undefined : definition.outcomes[result.outcomeId - 1];
-        if (!outcome) throw new Error("This round is still pending. Use Resume to continue it.");
+        if (!outcome) throw new Error("This game is still pending. Use Resume to continue it.");
         const deal = dealTable(outcome.reward > 0n);
         done++;
         setRound({ number: done, deal }); setRevealed(0); setProgress({ done, total: ids.length });
@@ -194,7 +194,7 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
         if (version !== epoch.current) return;
       }
     } catch (cause) {
-      if (version === epoch.current) { setError(errorText(cause, "A round could not be settled.")); setPhase("stopped"); void client.read().then(setSnapshot); }
+      if (version === epoch.current) { setError(errorText(cause, "A game could not be settled.")); setPhase("stopped"); void client.read().then(setSnapshot); }
       return;
     }
     const after = await client.read();
@@ -203,7 +203,7 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
     setPhase(after.plays.some(play => play.outcomeId === null) ? "stopped" : "done"); setStopping(false);
   }
 
-  /** One SDK prompt to buy the missing tickets, one to use them, then the rounds play one after another. */
+  /** One SDK prompt to buy the missing tickets, one to use them, then the games play one after another. */
   const start = (gamesToPlay: number) => run(async version => {
     const current = await client.read();
     const missingTickets = BigInt(gamesToPlay) - current.consumables;
@@ -214,7 +214,7 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
     await playRounds(plays.map(play => play.id), version);
   });
 
-  /** Unfinished rounds stay with the Friend. Resume settles those same plays; it never buys or uses another ticket. */
+  /** Unfinished games stay with the Friend. Resume settles those same plays; it never buys or uses another ticket. */
   const resume = () => run(async version => {
     const pending = (await client.read()).plays.filter(play => play.outcomeId === null).map(play => play.id);
     if (!pending.length) { load(); return; }
@@ -234,7 +234,7 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
   const toggleSound = () => { const next = !muted; setMuted(next); sound.current?.setMuted(next); if (!next) void sound.current?.unlock(); };
   const soundState = muted ? "off" : "on", soundAction = muted ? "turn on" : "turn off";
   const missing = Math.max(0, games - Number(snapshot.consumables));
-  const blocked = unfinished.length > 0 ? "Finish your unfinished rounds first." : maxGames === 0
+  const blocked = unfinished.length > 0 ? "Finish your unfinished games first." : maxGames === 0
     ? (snapshot.rfBalance < definition.price ? "Not enough simulated RF for a ticket." : "New tickets are paused until winnings are collected and prize backing is free again.") : "";
   const hud = <div className="fr-hud"><span><b className="fr-tag">SIMULATED</b> {rf(snapshot.rfBalance)} · {snapshot.consumables.toString()} tickets
     {screen === "room" && progress.total > 0 && <> · game {progress.done}/{progress.total}</>}</span>
@@ -253,7 +253,7 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
       <RoomScene friendId={friendId} deal={round?.deal ?? null} revealed={revealed} reducedMotion={reducedMotion}
         potLabel={rf(economy.pot)} feeLabel={rf(economy.tableFees)} />
       {hud}
-      <p className="fr-room-title">{round ? `Room ${designRf} RF · round ${round.number} of ${progress.total}` : `Room ${designRf} RF`}</p>
+      <p className="fr-room-title">{round ? `Room ${designRf} RF · game ${round.number} of ${progress.total}` : `Room ${designRf} RF`}</p>
       <p className="fr-result">{round && revealed >= SEATS
         ? <><b role="status">{describeResult(round.deal)}</b>{round.deal.won && <span> +{rf(prize)} SIMULATED</span>}</>
         : <b role="status">{round ? "Opening the numbers…" : phase === "playing" ? "Dealing the table…" : "Table closed."}</b>}</p>
@@ -263,8 +263,8 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
             <button type="button" aria-pressed={speed === 1} onClick={() => setSpeed(1)}>x1</button>
             <button type="button" aria-pressed={speed === 2} onClick={() => setSpeed(2)}>x2</button></span>
           <button type="button" disabled={skipping || paused} onClick={() => { skip.current = true; setSkipping(true); }}>{skipping ? "Skipping…" : "Skip to summary"}</button>
-          <button type="button" disabled={stopping || paused} onClick={() => { stop.current = true; setStopping(true); }}>{stopping ? "Stopping…" : "Stop after this round"}</button></> : <>
-          {phase === "stopped" && unfinished.length > 0 && <button type="button" className="rf-frame-primary" disabled={busy || paused} onClick={() => void resume()}>Resume {unfinished.length} unfinished {unfinished.length === 1 ? "round" : "rounds"}</button>}
+          <button type="button" disabled={stopping || paused} onClick={() => { stop.current = true; setStopping(true); }}>{stopping ? "Stopping…" : "Stop after this game"}</button></> : <>
+          {phase === "stopped" && unfinished.length > 0 && <button type="button" className="rf-frame-primary" disabled={busy || paused} onClick={() => void resume()}>Resume {unfinished.length} unfinished {unfinished.length === 1 ? "game" : "games"}</button>}
           <button type="button" className={phase === "done" ? "rf-frame-primary" : undefined} disabled={paused} onClick={() => setMenu("receipt")}>Session receipt</button>
           <button type="button" disabled={busy || paused} onClick={backToHall}>Back to the hall</button></>}
       </div>
@@ -284,18 +284,18 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
         <table><thead><tr><th>Result</th><th>Chance</th><th>Prize</th></tr></thead><tbody>{definition.outcomes.map(item =>
           <tr key={item.name}><td>{item.name}</td><td>{item.chanceBps / 100}%</td><td>{rf(item.reward)}</td></tr>)}</tbody></table>
         {winsWaiting > 0n && <p>Winnings waiting: {rf(winningsWaiting)}. <button type="button" disabled={busy || paused} onClick={() => void collect()}>Collect winnings</button></p>}
-        {unfinished.length > 0 && <p>You have {unfinished.length} unfinished {unfinished.length === 1 ? "round" : "rounds"}.
-          {" "}<button type="button" className="rf-frame-primary" disabled={busy || paused} onClick={() => void resume()}>Finish unfinished rounds</button></p>}
+        {unfinished.length > 0 && <p>You have {unfinished.length} unfinished {unfinished.length === 1 ? "game" : "games"}.
+          {" "}<button type="button" className="rf-frame-primary" disabled={busy || paused} onClick={() => void resume()}>Finish unfinished games</button></p>}
         <label>Games to play: <b>{games}</b>
           <input type="range" min={1} max={Math.max(maxGames, 1)} value={games} disabled={maxGames < 2 || busy || paused} aria-label="Games to play"
             onChange={event => setGames(Number(event.target.value))} /></label>
-        <p>{games} {games === 1 ? "game" : "games"} · {rf(definition.price * BigInt(games))}, including {rf(economy.fee * BigInt(games))} table fee (burned in the model). SIMULATED. You confirm {missing > 0 ? "two SDK prompts: buy the tickets, then use them" : "one SDK prompt: use your tickets"}. The Friend then plays all games on its own.</p>
+        <p>{games} {games === 1 ? "game" : "games"} · {rf(definition.price * BigInt(games))}, including {rf(economy.fee * BigInt(games))} table fee (burned in the model). All amounts are SIMULATED. You confirm {missing > 0 ? "two SDK prompts: buy the tickets, then use them" : "one SDK prompt: use your tickets"}. The Friend then plays all games on its own.</p>
         <button type="button" className="rf-frame-primary" disabled={Boolean(blocked) || busy || paused} onClick={() => void start(games)}>Play {games} {games === 1 ? "game" : "games"} · {rf(definition.price * BigInt(games))}</button>
         {blocked && <p>{blocked}</p>}
         <p>Each ticket reserves {rf(prize)} of prize backing in the SDK preview, so a run is limited to {maxGames} {maxGames === 1 ? "game" : "games"} right now.</p>
       </> : menu === "locked" ? <>
         <p>Room {count(lockedRoom)} RF needs future SDK support.</p>
-        <p>SDK v0.1 sells one ticket type in a private preview. Higher stakes need several ticket tiers, shared rooms and a room contract.</p>
+        <p>SDK v0.1 sells one ticket type in a private preview. Stake levels need several ticket tiers, rounds with real players and a room contract.</p>
         <button type="button" onClick={() => setMenu(null)}>Close</button>
       </> : menu === "receipt" ? <>
         <table><tbody>
@@ -310,7 +310,7 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
         </tbody></table>
         <p>Table fees are a model of a future room contract. SDK v0.1 does not burn RF: the whole ticket stays in the preview ledger as game backing.</p>
         {winsWaiting > 0n && <p>Winnings waiting: {rf(winningsWaiting)}. <button type="button" className="rf-frame-primary" disabled={busy || paused} onClick={() => void collect()}>Collect winnings</button></p>}
-        {unfinished.length > 0 && <p>{unfinished.length} unfinished {unfinished.length === 1 ? "round remains" : "rounds remain"}. Use Resume at the table.</p>}
+        {unfinished.length > 0 && <p>{unfinished.length} unfinished {unfinished.length === 1 ? "game remains" : "games remain"}. Use Resume at the table.</p>}
         <button type="button" onClick={() => setMenu(null)}>Close</button>
       </> : <>
         <button type="button" onClick={toggleSound}>Sound: {soundState} — {soundAction}</button>
