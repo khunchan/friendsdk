@@ -10,7 +10,7 @@ import { maximumPrize, type GameClient, type GameSnapshot } from "@rarefriends/f
 import { createFriendSoundKit, type FriendSoundKit } from "@rarefriends/friendsdk/sounds";
 import { RoomScene } from "./room.js";
 import { NEW_CAREER, SEATS, dealTable, describeResult, recordRound, tableEconomy, type Career, type Deal } from "./table.js";
-import "./world-view.css";
+import "@rarefriends/friendsdk/world-view.css";
 import "./style.css";
 
 /**
@@ -22,7 +22,7 @@ const DESIGN_SCALE = 100n;
 const MAX_GAMES = 99;
 /** Reveal pacing at x1 speed, in milliseconds. x2 halves every wait; Skip removes them. */
 const BOT_STEP_MS = 450, SUSPENSE_MS = 1500, HOLD_MS = 1800, HOLD_REDUCED_MS = 1200;
-/** Rooms that need SDK features v0.1 does not have. They are shown, never sold. */
+/** Rooms that need SDK features v0.1.2 does not have. They are shown, never sold. */
 const LOCKED_ROOMS = [
   { id: "door-1000", rf: 1_000, position: [58, 192] },
   { id: "door-10000", rf: 10_000, position: [288, 58] },
@@ -295,7 +295,7 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
         <p>Each ticket reserves {rf(prize)} of prize backing in the SDK preview, so a run is limited to {maxGames} {maxGames === 1 ? "game" : "games"} right now.</p>
       </> : menu === "locked" ? <>
         <p>Room {count(lockedRoom)} RF needs future SDK support.</p>
-        <p>SDK v0.1 sells one ticket type in a private preview. Stake levels need several ticket tiers, rounds with real players and a room contract.</p>
+        <p>SDK v0.1.2 sells one ticket type in a private preview. Stake levels need several ticket tiers, rounds with real players and a room contract.</p>
         <button type="button" onClick={() => setMenu(null)}>Close</button>
       </> : menu === "receipt" ? <>
         <table><tbody>
@@ -308,7 +308,7 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
           <tr><th>Table fees burned (model)</th><td>{rf(economy.fee * BigInt(career.played))} model</td></tr>
           <tr><th>All table fees, bots included (model)</th><td>{rf(economy.tableFees * BigInt(career.played))} model</td></tr>
         </tbody></table>
-        <p>Table fees are a model of a future room contract. SDK v0.1 does not burn RF: the whole ticket stays in the preview ledger as game backing.</p>
+        <p>Table fees are a model of a future room contract. SDK v0.1.2 does not burn RF: the whole ticket stays in the preview ledger as game backing.</p>
         {winsWaiting > 0n && <p>Winnings waiting: {rf(winningsWaiting)}. <button type="button" className="rf-frame-primary" disabled={busy || paused} onClick={() => void collect()}>Collect winnings</button></p>}
         {unfinished.length > 0 && <p>{unfinished.length} unfinished {unfinished.length === 1 ? "game remains" : "games remain"}. Use Resume at the table.</p>}
         <button type="button" onClick={() => setMenu(null)}>Close</button>

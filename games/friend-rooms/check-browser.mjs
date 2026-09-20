@@ -55,6 +55,30 @@ async function barClear(child) {
   }
 }
 
+/**
+ * The top bar (balance, Sound, Settings) must stay on one line and must not cover the door labels in the hall or the top row
+ * of the table, also on a phone. The Friend's plate is the highest thing on the table, at 112 of 640 native pixels.
+ */
+async function hudClear(child, screen) {
+  const parts = child.locator('.fr-hud > *');
+  const boxes = [];
+  for (let index = 0; index < await parts.count(); index++) boxes.push(await parts.nth(index).boundingBox());
+  const chip = await child.locator('.fr-hud > span').boundingBox();
+  const narrow = chip.width < 400 && (await child.locator('body').boundingBox()).width < 520;
+  assert(chip.height < (narrow ? 34 : 46), `The balance stays on one line (chip height ${Math.round(chip.height)} px)`);
+  if (screen === 'hall') {
+    const prompts = child.locator('.rf-world-prompt');
+    for (let index = 0; index < await prompts.count(); index++) {
+      const prompt = await prompts.nth(index).boundingBox();
+      for (const box of boxes) assert(!(box.x < prompt.x + prompt.width && prompt.x < box.x + box.width && box.y < prompt.y + prompt.height && prompt.y < box.y + box.height),
+        `The top bar covers door label ${index}`);
+    }
+  } else {
+    const canvas = await child.locator('.fr-scene canvas').boundingBox(), limit = canvas.y + 110 * canvas.width / 960;
+    for (const box of boxes) assert(box.y + box.height <= limit, `The top bar (bottom ${Math.round(box.y + box.height)} px) covers the top row of the table (from ${Math.round(limit)} px)`);
+  }
+}
+
 const directory = await mkdtemp(join(tmpdir(), 'friend-rooms-browser-'));
 const shots = process.env.FRIEND_ROOMS_SHOTS;
 let build, server, browser;
@@ -84,7 +108,7 @@ try {
     await page.getByRole('button', { name: 'Connect wallet', exact: true }).click();
     await page.getByRole('button', { name: /^Friend #7730\b/ }).click(); await worldReady();
     if (shots) await page.screenshot({ path: join(shots, `hall-${width}.png`) });
-    await assertBounds(page); await gameBounds(child);
+    await assertBounds(page); await gameBounds(child); await hudClear(child, 'hall');
     assert.match(await child.locator('.fr-hud').textContent(), /SIMULATED.*20 RF.*0 tickets/);
 
     // Keyboard movement.
@@ -143,7 +167,7 @@ try {
     assert.equal(Math.max(...numbers) === numbers[0], summary.includes('highest'), 'The highest number belongs to the Friend exactly on a win');
     assert.match(await child.locator('.fr-sr li[data-seat="friend"]').textContent(), /Friend #7730 \(\w+\)/, 'The seat names the Friend and its SDK character family');
     if (shots) await page.screenshot({ path: join(shots, `table-${width}.png`) });
-    await gameBounds(child); await barClear(child);
+    await gameBounds(child); await barClear(child); await hudClear(child, 'room');
     assert.match(await child.locator('.fr-hud').textContent(), new RegExp(`${17} RF · 0 tickets`), 'The HUD balance follows the SDK ledger');
     // The table has the same small sound button in its HUD.
     await hudSound('Sound: off — turn on').click(); await hudSound('Sound: on — turn off').click(); await hudSound('Sound: off — turn on').waitFor();

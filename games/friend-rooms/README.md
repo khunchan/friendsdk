@@ -1,6 +1,6 @@
 # Friend Rooms
 
-SDK version **v0.1.0** (also verified on **v0.1.2**). Your Rare Friend walks through a black-and-white isometric hall to a numbered
+SDK version **v0.1.2**. Your Rare Friend walks through a black-and-white isometric hall to a numbered
 room door. Behind the working door, ten seats share one table: your Friend and nine simulated bots. Every seat draws a
 unique number from 1 to 100 and the highest number wins.
 
@@ -61,7 +61,7 @@ a win gives your Friend the highest number, a loss gives it one of the lower num
 seat in ten wins, this matches the 10% chance in `game.json`. The numbers and bots are presentation only.
 
 **The table fee is a model.** The fee is separated from the pot when you enter, not taken from the winnings at the end;
-the odds and amounts are the same either way. SDK v0.1 does not burn RF: the whole 1 RF ticket stays in the preview ledger
+the odds and amounts are the same either way. SDK v0.1.2 does not burn RF: the whole 1 RF ticket stays in the preview ledger
 as game backing, and the SDK pays the 9 RF prize from it. The menus and the receipt label the fee "burned in the model"
 because it models a future room contract. Bot tickets and bot fees are simulated too.
 
@@ -106,7 +106,8 @@ randomness). `table.test.mjs` pins the seeded numbers above, so this section can
 4. **Tournaments with an NFT prize:** a bracket of tables of 10 ending in a final table (needs wearable NFTs and NFT prizes).
 5. **A Friend's own world as style:** the hall takes its look from the selected Friend's Scenery and Floor.
 
-Friend Rooms is a preview. A real version needs SDK capabilities that do not exist in v0.1. Nothing in this game
+Friend Rooms is a preview. A real version needs SDK capabilities that do not exist in v0.1.2, which welcomes durable items,
+cosmetics, perks, upgrades and extra currencies backed by RF but supplies no APIs for them yet. Nothing in this game
 pretends otherwise: every amount is labeled SIMULATED and the locked doors say so.
 
 | Needed capability | Why | In this preview |
@@ -171,7 +172,7 @@ Friend.
   final.
 - **Every player always sees one table of 10.** The final table is a shared show with 10 real Friends.
 - **The entry fee is paid in RF.** Part of it is burned and part goes to the prize.
-- **What the SDK lacks:** wearable NFTs, NFT prizes and tournament contracts. None of them exists in v0.1.
+- **What the SDK lacks:** wearable NFTs, NFT prizes and tournament contracts. None of them exists in v0.1.2.
 
 ### Minimum ticket size (estimate)
 
@@ -242,7 +243,7 @@ parameter, not a constant.
 ### A Friend's own world as style
 
 Every Friend has on-chain Scenery and Floor traits (for example Industrial or Rooftop, Plain or Hatch), and its world reflects
-its generation. SDK v0.1 does not give game code access to them, and its six world presets do not cover every Scenery value.
+its generation. SDK v0.1.2 does not give game code access to them, and its six world presets do not cover every Scenery value.
 A future SDK could expose these traits and a matching set of worlds. The hall layout would stay the same for everybody, and
 only its style (floor, decor, objects) would follow the selected Friend.
 
@@ -254,23 +255,25 @@ only its style (floor, decor, objects) would follow the selected Friend.
 
 ## Checks
 
-Run on 2026-09-20 with SDK v0.1 and Node.js 22, from the SDK root:
+Run on 2026-09-20 with SDK v0.1.2 and Node.js 22, from the SDK root:
 
 | Command | Result |
 | --- | --- |
-| `npm test` | 111 tests: 109 passed, 0 failed, 2 skipped (they need Foundry, which is not installed here) |
+| `npm test` | 116 tests: 114 passed, 0 failed, 2 skipped (they need Foundry, which is not installed here) |
 | `npm run typecheck` | passed |
 | `npm run check:games` | passed, including `games/friend-rooms` |
+| `node scripts/dev-game.mjs check games/friend-rooms` (`friendsdk check`) | passed |
+| `node scripts/dev-game.mjs test games/friend-rooms` (`friendsdk test`) | passed: the SDK's automated browser check with its mock wallet |
 | `npm run check:browser` | all SDK browser checks passed. They cover the SDK runtime and examples, not this game |
 | `node --test games/friend-rooms/table.test.mjs` | 9 passed: table rules, economy and the 10,000-play measurement |
-| `node games/friend-rooms/check-browser.mjs` | passed at 1100 px and 360 px with the SDK's mocked, read-only wallet fixture: canonical Friend movement, locked door, buy and use through the SDK, table numbers, receipt, Stop and Resume, Collect winnings, settings, container bounds and no button under the SDK toolbar |
+| `node games/friend-rooms/check-browser.mjs` | passed at 1100 px and 360 px with the SDK's mocked, read-only wallet fixture: canonical Friend movement, locked door, buy and use through the SDK, table numbers, receipt, Stop and Resume, Collect winnings, sound buttons, container bounds, no button under the SDK toolbar, and a top bar that stays on one line and clear of the door labels and the table |
 
 The browser check needs `npx playwright install chromium` once.
 
 ## Known limits
 
 - The SDK preview wallet is fixed at 20 RF, so tickets cost 1 RF (Room 100 RF at 1/100 scale) and one run is limited to 11 games by the prize backing.
-- Bots, the shared table and the table fee burn are simulated; SDK v0.1 has no shared rooms and does not burn RF.
+- Bots, the shared table and the table fee burn are simulated; SDK v0.1.2 has no shared rooms and does not burn RF.
 - Progress resets when the preview session ends.
 - On a 360 px wide screen the SDK container is only 360 x 240, so the table is small.
 - Automated checks use a mocked wallet and a sample Friend. The builder played more than 40 games by hand with a real wallet and two Friends: Generation 2 (Cellular) and Generation 4 (Skeleton).
