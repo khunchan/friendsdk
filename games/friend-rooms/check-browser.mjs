@@ -72,6 +72,8 @@ try {
     const child = page.frameLocator('iframe');
     const button = name => child.getByRole('button', { name, exact: true });
     const worldReady = () => child.locator('canvas[data-x]').waitFor();
+    const settingsSound = name => child.getByRole('dialog').getByRole('button', { name, exact: true });
+    const hudSound = name => child.locator('.fr-hud').getByRole('button', { name, exact: true });
     const walk = async point => {
       const canvas = child.locator('canvas'), box = await canvas.boundingBox(), [x, y] = project(...point);
       const position = { x: (x - 320) / 960 * box.width, y: (y - 330) / 640 * box.height };
@@ -127,7 +129,7 @@ try {
     assert.equal(await receiptRow('Tickets spent'), '3 RF SIMULATED');
     assert.equal(await receiptRow('Prizes won'), `${9 * wins} RF SIMULATED`);
     assert.equal(await receiptRow('Table fees burned (model)'), '0.3 RF model');
-    assert.equal(await receiptRow('Fees of the whole tables, bots included (model)'), '3 RF model');
+    assert.equal(await receiptRow('All table fees, bots included (model)'), '3 RF model');
     await button('Close').click();
     // The last table: ten unique numbers, and the highest-number marker agrees with the SDK result.
     const numbers = (await child.locator('.fr-sr li').evaluateAll(items => items.map(item => Number(item.dataset.number))));
@@ -143,6 +145,8 @@ try {
     if (shots) await page.screenshot({ path: join(shots, `table-${width}.png`) });
     await gameBounds(child); await barClear(child);
     assert.match(await child.locator('.fr-hud').textContent(), new RegExp(`${17} RF · 0 tickets`), 'The HUD balance follows the SDK ledger');
+    // The table has the same small sound button in its HUD.
+    await hudSound('Sound: off — turn on').click(); await hudSound('Sound: on — turn off').click(); await hudSound('Sound: off — turn on').waitFor();
 
     // Stop after one round: the rest stay unfinished, then Resume settles those same plays without buying more tickets.
     await button('Back to the hall').click(); await worldReady();
@@ -175,8 +179,13 @@ try {
 
     // Settings: mute and reduced motion.
     await button('Settings').click(); assert.equal(await child.getByLabel('Reduce motion').isChecked(), false);
-    await button('Sound off').click(); await button('Sound on').waitFor();
-    await button('Sound on').click(); await button('Sound off').waitFor();
+    // The Settings button says both the state and the action; the small HUD button stays in sync with it.
+    await settingsSound('Sound: off — turn on').click(); await settingsSound('Sound: on — turn off').waitFor();
+    await button('Close Settings').click();
+    await hudSound('Sound: on — turn off').waitFor(); assert.match(await child.locator('.fr-hud .fr-sound').textContent(), /^Sound: on$/);
+    await hudSound('Sound: on — turn off').click(); await hudSound('Sound: off — turn on').waitFor();
+    assert.match(await child.locator('.fr-hud .fr-sound').textContent(), /^Sound: off$/);
+    await button('Settings').click(); await settingsSound('Sound: off — turn on').waitFor();
     await gameBounds(child); await button('Close Settings').click();
     assert.deepEqual(errors, []);
     await context.close();

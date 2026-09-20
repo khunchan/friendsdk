@@ -36,7 +36,7 @@ simulated. Regenerate them with `node games/friend-rooms/capture-media.mjs` (nee
 - Use **Stop after this round** to pause a run. Unfinished rounds stay with your Friend; **Resume** settles those
   same rounds and never buys or uses another ticket.
 - Winnings wait in your inventory until you press **Collect winnings** (one more SDK prompt).
-- Settings has mute and reduce motion. Reduce motion is also read from your system setting.
+- Sound is off by default. The small **Sound** button in the top bar (in the hall and at the table) and the button in Settings turn it on and off; each says whether sound is on or off and what pressing it does. Settings also has reduce motion, which is also read from your system setting.
 - The three other doors (Room 1,000 / 10,000 / 100,000 RF) are locked: they need future SDK support.
 
 ## Rules and economy

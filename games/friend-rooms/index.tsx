@@ -231,11 +231,14 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
   });
 
   const backToHall = () => { setMenu(null); setScreen("hall"); };
+  const toggleSound = () => { const next = !muted; setMuted(next); sound.current?.setMuted(next); if (!next) void sound.current?.unlock(); };
+  const soundState = muted ? "off" : "on", soundAction = muted ? "turn on" : "turn off";
   const missing = Math.max(0, games - Number(snapshot.consumables));
   const blocked = unfinished.length > 0 ? "Finish your unfinished rounds first." : maxGames === 0
     ? (snapshot.rfBalance < definition.price ? "Not enough simulated RF for a ticket." : "New tickets are paused until winnings are collected and prize backing is free again.") : "";
   const hud = <div className="fr-hud"><span><b className="fr-tag">SIMULATED</b> {rf(snapshot.rfBalance)} · {snapshot.consumables.toString()} tickets
     {screen === "room" && progress.total > 0 && <> · game {progress.done}/{progress.total}</>}</span>
+    <button type="button" className="fr-sound" aria-label={`Sound: ${soundState} — ${soundAction}`} title={`Sound is ${soundState}. Press to ${soundAction}.`} disabled={paused} onClick={toggleSound}>Sound: {soundState}</button>
     {screen === "hall" && <button type="button" onClick={() => openMenu("settings")}>Settings</button>}</div>;
   const status = <p role={error ? "alert" : "status"}>{error || message || (busy ? "Waiting for SDK confirmation…" : "All RF amounts are SIMULATED.")}</p>;
 
@@ -303,14 +306,14 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
           <tr><th>Tickets spent</th><td>{rf(definition.price * BigInt(career.played))} SIMULATED</td></tr>
           <tr><th>Prizes won</th><td>{rf(prize * BigInt(career.wins))} SIMULATED</td></tr>
           <tr><th>Table fees burned (model)</th><td>{rf(economy.fee * BigInt(career.played))} model</td></tr>
-          <tr><th>Fees of the whole tables, bots included (model)</th><td>{rf(economy.tableFees * BigInt(career.played))} model</td></tr>
+          <tr><th>All table fees, bots included (model)</th><td>{rf(economy.tableFees * BigInt(career.played))} model</td></tr>
         </tbody></table>
         <p>Table fees are a model of a future room contract. SDK v0.1 does not burn RF: the whole ticket stays in the preview ledger as game backing.</p>
         {winsWaiting > 0n && <p>Winnings waiting: {rf(winningsWaiting)}. <button type="button" className="rf-frame-primary" disabled={busy || paused} onClick={() => void collect()}>Collect winnings</button></p>}
         {unfinished.length > 0 && <p>{unfinished.length} unfinished {unfinished.length === 1 ? "round remains" : "rounds remain"}. Use Resume at the table.</p>}
         <button type="button" onClick={() => setMenu(null)}>Close</button>
       </> : <>
-        <button type="button" aria-pressed={!muted} onClick={() => { const next = !muted; setMuted(next); sound.current?.setMuted(next); if (!next) void sound.current?.unlock(); }}>{muted ? "Sound off" : "Sound on"}</button>
+        <button type="button" onClick={toggleSound}>Sound: {soundState} — {soundAction}</button>
         <label><input type="checkbox" checked={reducedMotion} onChange={event => setReducedMotion(event.target.checked)} /> Reduce motion</label>
         <p>All economy actions are simulated. Reloading resets this preview. Wallet connection and ownership checks are provided by the SDK.</p>
       </>}{status}
