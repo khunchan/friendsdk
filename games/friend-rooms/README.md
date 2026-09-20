@@ -99,7 +99,7 @@ randomness). `table.test.mjs` pins the seeded numbers above, so this section can
 **Roadmap in five steps**
 
 1. **Duel:** two real players at one table of 2 (needs shared rooms and a room contract).
-2. **Rounds on a timer:** tables of 2 to 10 for whoever has signed up, with one keeper transaction and one Dice randomness per round.
+2. **Rounds on a timer:** tables of 2 to 10 for whoever has signed up, once the table fees cover the round's costs, with one keeper transaction and one Dice randomness per round.
 3. **Stake levels:** the locked doors, Room 1,000 / 10,000 / 100,000 RF, become playable.
 4. **Tournaments with an NFT prize:** a bracket of tables of 10 ending in a final table (needs wearable NFTs and NFT prizes).
 5. **A Friend's own world as style:** the hall takes its look from the selected Friend's Scenery and Floor.
@@ -139,7 +139,8 @@ this preview one ticket is one "game"; below, a "round" is one timer-started bat
    split at entry: 0.9 of it goes into the pot and 0.1 is the table fee.
 4. **Rounds run on a timer,** for example once a minute, not when a hall fills. Everyone who signed up in time is seated at
    tables of up to 10. A table needs at least 2 players: a player left alone waits for the next round or gets the whole
-   ticket back.
+   ticket back. A round starts only if its table fees cover its costs (see "Minimum ticket size"); otherwise it waits for the
+   next timer.
 5. **Any table of n players (2 to 10) works the same way.** Its pot is n x 0.9 x ticket and the highest number takes it, so
    every player has a 1/n chance and the average return is 90%. The player could also choose the table size: a duel (2) and
    a full table (10) have the same average return but different risk.
@@ -150,8 +151,8 @@ this preview one ticket is one "game"; below, a "round" is one timer-started bat
    canonical Friend sprites.
 
 **Why rounds on a timer.** At launch there will be few players. A room that waits for a full hall would stay empty, while a
-timer runs a round with whoever has signed up, even two players. Nobody waits for a crowd, and liquidity can build up
-gradually.
+timer starts a round as soon as its table fees cover its costs, so a few players are enough (about 4 at the 100 RF level and
+2 from 1,000 RF; estimate, see "Minimum ticket size"). Nobody waits for a crowd, and liquidity can build up gradually.
 
 A contract is better than a separate server because fairness can be checked on-chain. No operator can pick the winners, hold
 the pots or replay a round, and anyone can recompute every table from the published randomness. If a keeper goes offline,
@@ -207,8 +208,18 @@ With 10 players in the round (one table):
 | 100,000 RF | $3,136 | $313.60 | 3,136x | about 100% |
 
 With 10 players in the round the minimum is about 32 RF, so 100 RF is the smallest listed room that works. The minimum
-falls in proportion to the number of players who share the costs of a round. That is why the working door is Room 100 RF:
-it stays viable even when a round has only 10 players.
+falls in proportion to the number of players who share the costs of a round. The other way round, the number of players a
+round needs grows as the ticket gets smaller:
+
+```text
+minimum players in a round = round costs / (10% x ticket x RF price)
+```
+
+*Estimate, with the same inputs as above.* At the 100 RF level a round needs at least about 4 players for the fees to cover
+the costs: 4 x 10 RF = 40 RF, about $0.125, against about $0.10 of costs. Three players give about $0.094 and two players
+about $0.063, so smaller rounds do not start and wait for the next timer. That follows directly from the rule that a round
+should not start when its costs exceed the fees. From 1,000 RF up, two players are enough (2 x 100 RF = 200 RF, about $0.63).
+So 100 RF is the lowest stake level that works with only a handful of players, which is why it is the working door.
 
 Protections a future contract should have: the RF/ETH rate comes from a time-weighted average price (TWAP) of a pool, not the
 spot price; a round does not start when its costs are above a threshold; and the minimum denomination is a configurable
