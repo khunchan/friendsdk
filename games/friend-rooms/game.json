@@ -1,0 +1,9 @@
+{
+  "name": "Friend Rooms",
+  "consumable": "Ticket",
+  "price": "1000000000000000000",
+  "outcomes": [
+    { "name": "Highest number", "chanceBps": 1000, "reward": "9000000000000000000" },
+    { "name": "Lower number", "chanceBps": 9000, "reward": "0" }
+  ]
+}
