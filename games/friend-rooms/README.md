@@ -209,13 +209,17 @@ With 10 players in the round (one table):
 
 With 10 players in the round the minimum is about 32 RF, so 100 RF is the smallest listed room that works. The minimum
 falls in proportion to the number of players who share the costs of a round. The other way round, the number of players a
-round needs grows as the ticket gets smaller:
+round needs grows as the ticket gets smaller. The minimum is dynamic: the contract recomputes it before every round.
 
 ```text
-minimum players in a round = round costs / (10% x ticket x RF price), rounded up and never below 2
+minimum players in a round = max(2, ceil(round costs in ETH / (10% x ticket x RF/ETH TWAP)))
 ```
 
-Minimum players per round (estimate, with the same inputs as above):
+Gas and Dice are paid in ETH, so the dollar price of ETH cancels out: the contract needs only the RF/ETH rate from the pool
+(as a TWAP) and no dollar oracle. The game would show the current minimum at the door of each stake level ("needs at least N
+players this round").
+
+Snapshot for today, an estimate as of 2026-09-20 with the same inputs as above (the real minimum moves with prices):
 
 | Stake level | Minimum players | Table fees at that size | Burned after costs |
 | ---: | ---: | ---: | ---: |
@@ -225,7 +229,7 @@ Minimum players per round (estimate, with the same inputs as above):
 | 100,000 RF | 2 | 2 x 10,000 RF = 20,000 RF, about $62.72 | about 100% |
 
 At 100 RF three players give only about $0.094 against about $0.10 of costs, and two give about $0.063. A duel of two players
-pays for itself from a ticket of about 160 RF. Rounds smaller than the minimum do not start and wait for the next timer. That
+pays for itself from a ticket of about 160 RF. If RF gains about 60% against ETH, a duel at the 100 RF level pays for itself, and a subsidy for Dice lowers the costs, and with them the minimum, at every level where it is above 2. Rounds smaller than the minimum do not start and wait for the next timer. That
 follows directly from the rule that a round should not start when its costs exceed the fees. So 100 RF is the lowest stake
 level that works with only a handful of players, which is why it is the working door.
 
