@@ -184,4 +184,4 @@ The browser check needs `npx playwright install chromium` once.
 - Bots, the shared table and the burn are simulated; SDK v0.1 has no shared rooms and does not burn RF.
 - Progress resets when the preview session ends.
 - On a 360 px wide screen the SDK container is only 360 x 240, so the table is small.
-- Automated checks use a mocked wallet and a sample Friend. The builder played more than 30 games with a real wallet and one Generation 2 Friend.
+- Automated checks use a mocked wallet and a sample Friend. The builder played more than 40 games by hand with a real wallet and two Friends: Generation 2 (Cellular) and Generation 4 (Skeleton).
