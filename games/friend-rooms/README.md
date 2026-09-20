@@ -1,11 +1,13 @@
 # Friend Rooms
 
-SDK version **v0.1**. Your Rare Friend walks through a black-and-white isometric hall to a numbered
+SDK version **v0.1.0** (also verified on **v0.1.2**). Your Rare Friend walks through a black-and-white isometric hall to a numbered
 room door. Behind the working door, ten seats share one table: your Friend and nine simulated bots. Every seat draws a
 unique number from 1 to 100 and the highest number wins.
 
 **Everything is simulated.** Prices, balances and prizes use the SDK preview ledger; the table fee and its burn are a labeled model.
 Nothing is sent on-chain. An owned Generations NFT is still required; the SDK runtime checks it.
+
+**Risks for wallets and funds:** none known. Connecting a wallet only reads which Friends you own; the game never asks for a signature, a key or a transaction, and no funds are involved.
 
 **Playable preview:** https://khunchan.github.io/friendsdk/ (a static build from commit `b44a4b5`). You need a browser wallet holding a hardwired Rare Friends
 Generations NFT (generation 1 or higher) on Robinhood mainnet; the SDK verifies ownership before play. Everything is
