@@ -7,6 +7,22 @@ unique number from 1 to 100 and the highest number wins.
 **Everything is simulated.** Prices, balances, prizes and the burn use the SDK preview ledger or a labelled model.
 Nothing is sent on-chain. An owned Generations NFT is still required; the SDK runtime checks it.
 
+## Screenshots
+
+![One round: the numbers open one by one, bots from the lowest up and the Friend last, then a win with HIGHEST! and +9 RF SIMULATED](media/round.gif)
+
+*One round, played at x1 speed: bots open from the lowest number up, the Friend's number opens last, then the win.*
+
+| Hall with the working door and three locked doors | Table during the reveal (closed plates show ?) |
+| --- | --- |
+| ![The hall: Room 100 RF is open, Rooms 1,000, 10,000 and 100,000 RF are locked](media/hall.png) | ![The table mid-reveal, some plates still closed](media/reveal.png) |
+| **A win: HIGHEST! and +9 RF SIMULATED** | **Session receipt** |
+| ![A win at the table](media/win.png) | ![The session receipt](media/receipt.png) |
+
+*These images come from the game running in the SDK's public runner with the SDK's mocked, read-only test wallet and its
+sample Friend #7730. The preview rolls are scripted (a loss, a win, a loss) so that a win can be shown; all amounts are
+simulated. Regenerate them with `node games/friend-rooms/capture-media.mjs` (needs Python 3 with Pillow).*
+
 ## How to play
 
 - Move with WASD, the arrow keys, or tap/click a destination. Walk to a door and press E (or tap its label).
@@ -144,7 +160,8 @@ only its style (floor, decor, objects) would follow the selected Friend.
 ## Files
 
 `index.tsx` (hall, door menu, SDK flow), `room.tsx` (table scene), `table.ts` (numbers, economy, career), `table.test.mjs`
-(unit tests), `simulate.mjs` (10,000-play measurement), `check-browser.mjs` (browser check), `game.json` (ticket price and outcomes).
+(unit tests), `simulate.mjs` (10,000-play measurement), `check-browser.mjs` (browser check), `capture-media.mjs` and `assemble-media.py`
+(the images in `media/`), `game.json` (ticket price and outcomes).
 
 ## Checks
 
