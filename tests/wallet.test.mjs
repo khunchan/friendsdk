@@ -14,9 +14,9 @@ function wallet() {
   const events = new Map();
   const state = { accounts: [OWNER], chainId: "0x1237", requests: [], overrides: {} };
   const provider = {
-    request({ method }) {
+    request({ method, params }) {
       state.requests.push(method);
-      if (state.overrides[method]) return state.overrides[method]();
+      if (state.overrides[method]) return state.overrides[method](params);
       if (method === "eth_accounts" || method === "eth_requestAccounts") return Promise.resolve(state.accounts);
       if (method === "eth_chainId") return Promise.resolve(state.chainId);
       throw new Error(`Unexpected wallet request: ${method}`);
@@ -226,4 +226,83 @@ test("the default public client requires neither a key nor a wallet transport", 
   assert.equal(client.account, undefined);
   assert.equal(client.cacheTime, 0);
   assert.equal(client.sendTransaction, undefined);
+});
+
+test('network switch is explicit, uses pinned chain, and rereads a wallet without events', async () => {
+  const w = wallet(); w.state.chainId = '0x1';
+  const session = createFriendWalletSession({ provider: w.provider });
+  await tick();
+  assert(!w.state.requests.includes('wallet_switchEthereumChain'));
+  const pending = deferred();
+  w.state.overrides.wallet_switchEthereumChain = async params => {
+    assert.deepEqual(params, [{ chainId: '0x1237' }]);
+    await pending.promise; w.state.chainId = '0x1237';
+  };
+  const oldRevision = session.getSnapshot().revision;
+  const switching = session.switchNetwork();
+  assert.equal(session.getSnapshot().status, 'switching-network');
+  assert.equal(session.getSnapshot().account, null);
+  assert(session.getSnapshot().revision > oldRevision);
+  await session.switchNetwork();
+  assert.equal(w.state.requests.filter(method => method === 'wallet_switchEthereumChain').length, 1);
+  pending.resolve(); await switching;
+  assert.equal(session.getSnapshot().status, 'connected');
+  assert.equal(session.getSnapshot().account, OWNER);
+  session.dispose();
+});
+
+test('unknown network is added with official settings then explicitly selected', async () => {
+  const w = wallet(); w.state.chainId = '0x1';
+  const session = createFriendWalletSession({ provider: w.provider }); await tick();
+  let switches = 0;
+  w.state.overrides.wallet_switchEthereumChain = () => {
+    if (++switches === 1) throw { code: 4902 };
+    w.state.chainId = '0x1237';
+  };
+  w.state.overrides.wallet_addEthereumChain = params => {
+    assert.deepEqual(params, [{ chainId: '0x1237', chainName: 'Robinhood Chain',
+      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+      rpcUrls: ['https://rpc.mainnet.chain.robinhood.com'],
+      blockExplorerUrls: ['https://robinhoodchain.blockscout.com'] }]);
+  };
+  await session.switchNetwork();
+  assert.equal(switches, 2);
+  assert.equal(session.getSnapshot().status, 'connected');
+  session.dispose();
+});
+
+test('declined and unsupported switches remain retryable; success never assumes chain changed', async () => {
+  for (const code of [4001, 4200, -32002]) {
+    const w = wallet(); w.state.chainId = '0x1';
+    const session = createFriendWalletSession({ provider: w.provider }); await tick();
+    w.state.overrides.wallet_switchEthereumChain = () => { throw { code }; };
+    await session.switchNetwork();
+    assert.equal(session.getSnapshot().status, 'wrong-network');
+    assert.match(session.getSnapshot().error, code === 4001 ? /declined/ : code === -32002 ? /pending/ : /select Robinhood/);
+    assert(!w.state.requests.includes('wallet_addEthereumChain'));
+    w.state.overrides.wallet_switchEthereumChain = () => null;
+    await session.switchNetwork();
+    assert.equal(session.getSnapshot().status, 'wrong-network');
+    session.dispose();
+  }
+});
+
+test('network-switch completion cannot revive disconnected, disposed or changed sessions', async () => {
+  for (const event of ['disconnect', 'dispose', 'accountsChanged', 'chainChanged']) {
+    const w = wallet(); w.state.chainId = '0x1';
+    const session = createFriendWalletSession({ provider: w.provider }); await tick();
+    const pending = deferred();
+    w.state.overrides.wallet_switchEthereumChain = () => pending.promise;
+    const switching = session.switchNetwork();
+    if (event === 'disconnect') session.disconnect();
+    else if (event === 'dispose') session.dispose();
+    else if (event === 'accountsChanged') { w.state.accounts = [NEXT_OWNER]; w.emit(event, [NEXT_OWNER]); }
+    else { w.state.chainId = '0x1237'; w.emit(event, '0x1237'); }
+    await tick();
+    const snapshot = session.getSnapshot();
+    pending.reject({ code: 4902 }); await switching;
+    assert.strictEqual(session.getSnapshot(), snapshot);
+    assert(!w.state.requests.includes('wallet_addEthereumChain'));
+    session.dispose();
+  }
 });

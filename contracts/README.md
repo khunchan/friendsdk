@@ -1,8 +1,14 @@
-# Standalone FriendSDK v0.1 contracts
+# Standalone FriendSDK v0.1.2 contracts
 
 The package supplies immutable RF chance-game contracts and deployment tools.
 RF, Generations, canonical NFT wallets and Dice are existing mainnet dependencies
 accessed through interfaces.
+
+Each supplied game contract supports one RF-priced consumable and one outcome
+table. This is the current reference implementation, not a requirement that
+every submission use that economy. Durable items, cosmetics, perks, upgrades and
+additional currencies are welcome when backed by or integrated with
+$RAREFRIENDS (RF); this package does not implement those additional actions.
 
 ## Two new contracts
 
@@ -15,7 +21,11 @@ Deploying `ChanceGame` creates its consumable in the same transaction. Its `team
 getter identifies the deploying developer, who alone can withdraw **free** RF
 stake. Contract deployment and game publication are separate operations.
 
-There are no launchpads, submission payments, extra currencies, tiers, activation gates, proxies, upgrade hooks, pause controls or configurable administrators. The existing RF token, Generations collection, NFT-wallet implementation and Dice oracle are referenced by interfaces only. Test doubles live exclusively in `test/`.
+These reference contracts do not implement launchpads, submission payments,
+additional currencies, tiers or activation gates. They have no proxies, upgrade
+hooks, pause controls or configurable administrators. The existing RF token,
+Generations collection, NFT-wallet implementation and Dice oracle are referenced
+by interfaces only. Test doubles live exclusively in `test/`.
 
 ## Existing Robinhood mainnet dependencies
 

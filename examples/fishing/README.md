@@ -1,10 +1,8 @@
-# Fishing example · FriendSDK v0.1
+# Fishing example · FriendSDK v0.1.2
 
 Fishing demonstrates a playable world, keyboard/touch movement, vendors,
-collection and reward reveals. Build the requested game component in the user's
-current project directory. Use world objects and locations for activities, with
-menus supporting those interactions. Include surrounding website pages only
-when explicitly requested.
+collection and reward reveals. Its world interactions, menus and project layout
+are reference choices; other genres, interfaces and project setups are welcome.
 
 The SDK runtime provides the 960 × 640 container, wallet connection, owned Friend
 selection, fresh hardwired-NFT eligibility checks, sandbox and confirmations.
@@ -15,7 +13,10 @@ Generations NFT, including simulated previews. See the
 Keep purchases, rewards and redemption simulated by default. Read-only ownership
 checks remain required. On-chain implementation is a later phase with the Rare
 Friends team after publishing requirements are met, unless explicitly requested.
-Transactions, deployment and publication require their applicable authorization.
+Transactions, contract deployment and official Rare Friends production publication
+require their applicable authorization. You may host a public simulated preview
+on GitHub Pages without separate Rare Friends approval; see the
+[hosting instructions](../../README.md#build-and-share-a-preview).
 
 ## Run the example
 
@@ -39,10 +40,10 @@ collectible bitmaps. `sample-sprites.ts` records the source of canonical artwork
 samples. Artwork does not verify ownership.
 
 The fishing scenery, assets, palette, projection and camera are choices for this
-example. Creators may use their own world assets, visual style and renderer;
-`GameWorld` and the shipped world utilities are optional. Preserve the selected
-Rare Friend's canonical sprites, SDK menus/actions, keyboard/touch controls and
-accessibility in custom worlds.
+example. Creators may use their own world assets, character art, visual style,
+renderer and menus; `GameWorld` and the shipped world utilities are optional.
+Choose accessible controls suited to the genre. Custom artwork does not replace
+the runtime's NFT ownership checks or change the supported action client.
 
 The [embedded example](../embedded/README.md) demonstrates the same runtime with
 a prebuilt sandbox child. [The runtime guide](../../HOST_INTEGRATION.md) documents
@@ -117,8 +118,11 @@ until sold, with no expiry. Weights total **10,000 basis points**; expected rewa
 is **0.90 RF**. See the [catch table and consumable rules](../../FISHING_GAME_DESIGN.md#catch-economy).
 
 Each cast settles once before its reveal. Reeling does not change the outcome.
-Hats, wearable NFTs, additional bait tiers, trading and creator fees are not
-implemented SDK capabilities.
+This reference does not implement cosmetics, durable items, perks, upgrades,
+additional currencies, trading or creator fees. Durable items, cosmetics, perks,
+upgrades and additional currencies are welcome when backed by or integrated with
+$RAREFRIENDS (RF). The supplied runtime and contracts still expose one RF-priced
+consumable and outcome table, so document any capabilities your idea needs.
 
 ## Verify
 

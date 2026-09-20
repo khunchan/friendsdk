@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { formatGameAmount } from "./experience-ui.js";
 
-/** One viewport for every game. The host owns its boundary and account controls. */
+/** Reference viewport dimensions; hosts may choose another layout through frame.css. */
 export const GAME_VIEWPORT = Object.freeze({ width: 960, height: 640 });
 export type GameFriend = Readonly<{ id: bigint; label: string; walletAddress?: string; kind: "owned" | "sample" }>;
 export type GameWalletState = Readonly<{ balance?: bigint; status?: "ready" | "loading" | "error"; error?: string }>;
@@ -14,6 +14,9 @@ export type GameConfirmation = Readonly<{
 export type GameFrameProps = {
   children: ReactNode; friends: readonly GameFriend[]; selectedFriendId: bigint | null;
   onSelectFriend?: (id: bigint) => void; friendsLoading?: boolean; friendsError?: string;
+  /** Only show the empty result after successful discovery; null suppresses it. */
+  friendsEmptyMessage?: string | null;
+  friendsHiddenCount?: number;
   /** Use host when the surrounding interface already owns selection and connection. */
   selectionMode?: "picker" | "host";
   onConnect?: () => void; wallet?: GameWalletState; confirmation?: GameConfirmation | null;
@@ -46,13 +49,13 @@ export function GameMenu({ title, onClose, children, footer }: { title: string; 
   </div></div>;
 }
 
-export function GameFrame({ children, friends, selectedFriendId, onSelectFriend, friendsLoading, friendsError, onConnect, wallet, confirmation, connection, walletActions, selectionMode = "picker", mode, onMenuChange }: GameFrameProps) {
+export function GameFrame({ children, friends, selectedFriendId, onSelectFriend, friendsLoading, friendsError, friendsEmptyMessage = "No playable Friends found.", friendsHiddenCount = 0, onConnect, wallet, confirmation, connection, walletActions, selectionMode = "picker", mode, onMenuChange }: GameFrameProps) {
   const [menu, setMenu] = useState<"friends" | "wallet" | null>(null);
   const friend = friends.find(value => value.id === selectedFriendId);
   const selecting = selectionMode === "picker" && (!friend || menu === "friends");
   const menuOpen = selecting || menu === "wallet" || Boolean(confirmation);
   useEffect(() => { onMenuChange?.(menuOpen); }, [menuOpen, onMenuChange]);
-  return <section className="rf-game-frame" aria-label="Game container" data-mode={mode} style={{ aspectRatio: `${GAME_VIEWPORT.width} / ${GAME_VIEWPORT.height}` }}>
+  return <section className="rf-game-frame" aria-label="Game container" data-mode={mode}>
     <div className="rf-frame-chrome" inert={menuOpen || undefined}>
       <div className="rf-frame-toolbar">
         <span className="rf-frame-mode">{mode === "preview" ? "Local preview" : "Live · Robinhood"}</span>
@@ -74,7 +77,8 @@ export function GameFrame({ children, friends, selectedFriendId, onSelectFriend,
       {friendsLoading && <p role="status">Loading your Friends…</p>}
       {friendsError && <p role="alert">{friendsError}</p>}
       <div className="rf-frame-friends">{friends.map(value => <button type="button" key={value.id.toString()} aria-pressed={value.id === selectedFriendId} onClick={() => { onSelectFriend?.(value.id); setMenu(null); }}><strong>{value.label}</strong><small>{value.kind === "sample" ? "Sample · no ownership claim" : "Hardwired Generations"}</small></button>)}</div>
-      {!friendsLoading && !friends.length && <p>No playable Friends found.</p>}
+      {!friendsLoading && !friendsError && friendsHiddenCount > 0 && <p>{friendsHiddenCount} {friendsHiddenCount === 1 ? "Friend" : "Friends"} hidden: not hardwired (generation 0). Playing requires generation 1 or higher.</p>}
+      {!friendsLoading && !friendsError && !friends.length && friendsEmptyMessage && <p>{friendsEmptyMessage}</p>}
       {onConnect && <button type="button" className="rf-frame-primary" onClick={onConnect}>Connect wallet</button>}
     </GameMenu> : menu === "wallet" ? <GameMenu title="Friend wallet" onClose={() => setMenu(null)}>
       <h3>{friend?.label}</h3><p>{mode === "preview" ? "Preview balance. RF is simulated and no transactions are sent." : "Items and RF belong to this Friend’s canonical wallet."}</p>

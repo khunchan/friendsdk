@@ -9,7 +9,7 @@ export interface FriendWalletProvider {
 }
 export type FriendWalletChoice = Readonly<{ id: string; name: string }>;
 export type FriendWalletSnapshot = Readonly<{
-  status: "unavailable" | "disconnected" | "connecting" | "connected" | "wrong-network" | "error";
+  status: "unavailable" | "disconnected" | "connecting" | "switching-network" | "connected" | "wrong-network" | "error";
   wallets: readonly FriendWalletChoice[];
   selectedWalletId: string | null;
   account: Address | null;
@@ -176,6 +176,41 @@ export function createFriendWalletSession(options: FriendWalletSessionOptions = 
       return readConnection(true);
     },
     refresh: () => readConnection(false),
+    /** Only invoke from a user gesture. This requests a network change, never a transaction. */
+    async switchNetwork() {
+      if (disposed || !selected || state.status === "switching-network") return state;
+      const { provider } = selected;
+      const ticket = invalidate("switching-network");
+      const active = () => !disposed && ticket === operation && selected?.provider === provider;
+      const chainId = `0x${GENERATION_SPRITE_MANIFEST.chainId.toString(16)}`;
+      try {
+        try {
+          await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId }] });
+        } catch (error) {
+          if (!active()) return state;
+          if (!error || typeof error !== "object" || !("code" in error) || error.code !== 4902) throw error;
+          // Official network settings: https://docs.robinhood.com/chain/connecting/
+          await provider.request({ method: "wallet_addEthereumChain", params: [{ chainId,
+            chainName: "Robinhood Chain", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+            rpcUrls: [GENERATION_SPRITE_MANIFEST.rpcUrl], blockExplorerUrls: ["https://robinhoodchain.blockscout.com"],
+          }] });
+          if (!active()) return state;
+          // Adding a network does not guarantee the wallet selected it.
+          await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId }] });
+        }
+        // chainChanged may already have started a fresh read and invalidated this operation.
+        if (active()) await readConnection(false);
+      } catch (error) {
+        if (!active()) return state;
+        const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+        const message = code === 4001 ? "Network switch declined. Try again when ready."
+          : code === -32002 ? "A wallet request is already pending. Open your wallet to finish it."
+          : "Could not switch networks. Try again, or select Robinhood mainnet (4663) in your wallet and check the network.";
+        await readConnection(false);
+        if (!disposed && operation === ticket + 1 && selected?.provider === provider) publish({ error: message });
+      }
+      return state;
+    },
     /** Forget this local session. Does not revoke permissions or modify the wallet. */
     disconnect() {
       if (disposed) return;

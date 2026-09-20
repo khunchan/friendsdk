@@ -1,6 +1,8 @@
 # FriendSDK sound kit
 
-Use the shared kit for choices, purchases, activities, reveals, and rewards. The fishing reference demonstrates its use.
+The optional shared kit provides sounds for choices, purchases, activities,
+reveals and rewards. Use it, your own audio, or no audio to suit the game. The
+fishing reference demonstrates the shared kit.
 
 The palette uses rounded sine/triangle plucks, warm low notes, soft ticks and ascending three-note pickups. All cues are synthesized from code, with no recordings or external samples. Source attribution is recorded in `assets/sound-provenance.json`.
 
@@ -25,7 +27,7 @@ sounds.stop();        // Cancel an interrupted sequence.
 sounds.dispose();     // Release the context/listeners on game unmount.
 ```
 
-`play()` returns whether playback started. It never unlocks audio itself. `unlock()` resolves to false if audio is unavailable or resume fails, so games remain playable without sound. The kit stops voices when its document becomes hidden. Use an explicit mute control in your game and call `stop()` when closing a reveal, resetting, or leaving the experience. No background music is started automatically.
+`play()` returns whether playback started. It never unlocks audio itself. `unlock()` resolves to false if audio is unavailable or resume fails, so games remain playable without sound. The kit stops voices when its document becomes hidden. Provide an explicit mute control in games with audio; when using this kit, call `stop()` when closing a reveal, resetting, or leaving the experience. No background music is started automatically.
 
 ## Cues
 

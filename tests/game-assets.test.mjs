@@ -16,9 +16,11 @@ test('game validation accepts creator SVG/PNG art without a world renderer and r
   try {
     await mkdir(game, { recursive: true });
     await mkdir(join(directory, 'scripts'));
+    await mkdir(join(directory, 'examples'));
     await copyFile(join(root, 'scripts/check-games.mjs'), join(directory, 'scripts/check-games.mjs'));
+    await copyFile(join(root, 'package.json'), join(directory, 'package.json'));
     // Junctions avoid Windows file-symlink privileges; all fixture writes remain in tmpdir.
-    for (const name of ['node_modules', 'dist', 'examples']) await symlink(join(root, name), join(directory, name), 'junction');
+    for (const name of ['node_modules', 'dist']) await symlink(join(root, name), join(directory, name), 'junction');
     await copyFile(join(root, 'examples/starter/game.json'), join(game, 'game.json'));
     await writeFile(join(game, 'README.md'), '# Custom artwork validation fixture\n');
     await writeFile(join(game, 'world.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><rect width="8" height="8" fill="purple"/></svg>');

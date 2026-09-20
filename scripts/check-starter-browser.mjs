@@ -1,29 +1,14 @@
 // Internal automated fixture: real public runner, mocked read-only identity and canonical sprite responses.
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium } from 'playwright';
-import { decodeFunctionData, encodeFunctionResult } from 'viem';
-import { FAMILIES_REGISTRY_ABI, GENERATION_SPRITE_MANIFEST } from '../dist/generation-sprites.js';
 import { project } from '../dist/friend-world.js';
 import { buildGame, createGameServer } from './dev-game.mjs';
-import { installFixture, assertBounds } from './check-runtime-browser.mjs';
+import { installFixture, assertBounds, createArtworkFixture } from './browser-fixture.mjs';
 
-const source = await readFile(new URL('../examples/fishing/sample-sprites.ts', import.meta.url), 'utf8');
-const section = source.split('"7730": decodeGenerationSprites')[1].split(']),')[0];
-const frames = [...section.matchAll(/0x[0-9a-f]+n/g)].map(([word]) => BigInt(word.slice(0, -1)));
-assert.equal(frames.length, 64, 'The browser test uses all 64 canonical sample frames');
-function artworkCall(call) {
-  assert.equal(call.to.toLowerCase(), GENERATION_SPRITE_MANIFEST.registry.toLowerCase());
-  const { functionName, args } = decodeFunctionData({ abi: FAMILIES_REGISTRY_ABI, data: call.data });
-  let result;
-  if (functionName === 'familyOf') { assert.equal(args[0], 7730n); result = 5; }
-  else if (functionName === 'seedOf') { assert.equal(args[0], 7730n); result = 7730; }
-  else if (functionName === 'frames') { assert.deepEqual(args, [5, 7730]); result = frames; }
-  else throw new Error(`Unexpected artwork read ${functionName}`);
-  return encodeFunctionResult({ abi: FAMILIES_REGISTRY_ABI, functionName, result });
-}
+const artworkCall = await createArtworkFixture();
 async function gameBounds(child) {
   assert.deepEqual(await child.locator('body').evaluate(() => {
     const bounds = document.body.getBoundingClientRect(), problems = [];

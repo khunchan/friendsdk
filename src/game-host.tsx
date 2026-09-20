@@ -60,7 +60,7 @@ function WalletViewport({ session, publicClient, ...props }: Omit<GameHostProps,
   const [attempt, setAttempt] = useState(0);
   const [selected, setSelected] = useState<bigint | null>(null);
   const [discovery, setDiscovery] = useState<{
-    client: OwnedFriendsClient; session: FriendWalletSession; revision: number; attempt: number; friends: readonly OwnedFriend[]; error?: string;
+    client: OwnedFriendsClient; session: FriendWalletSession; revision: number; attempt: number; friends: readonly OwnedFriend[]; hiddenCount?: number; error?: string;
   } | null>(null);
   const valid = wallet.status === "connected" && discovery?.revision === wallet.revision &&
     discovery.client === publicClient && discovery.session === session && discovery.attempt === attempt ? discovery : null;
@@ -71,7 +71,7 @@ function WalletViewport({ session, publicClient, ...props }: Omit<GameHostProps,
     if (wallet.status !== "connected" || !wallet.account) return;
     const controller = new AbortController();
     void readOwnedFriends(publicClient, wallet.account, { signal: controller.signal }).then(result => {
-      if (!controller.signal.aborted) setDiscovery({ client: publicClient, session, revision: wallet.revision, attempt, friends: result.friends });
+      if (!controller.signal.aborted) setDiscovery({ client: publicClient, session, revision: wallet.revision, attempt, friends: result.friends, hiddenCount: result.hiddenCount });
     }).catch(error => {
       if (!controller.signal.aborted) setDiscovery({ client: publicClient, session, revision: wallet.revision, attempt, friends: [],
         error: error instanceof Error ? error.message : "Could not load your Friends. Try again." });
@@ -79,20 +79,24 @@ function WalletViewport({ session, publicClient, ...props }: Omit<GameHostProps,
     return () => controller.abort();
   }, [session, publicClient, wallet.status, wallet.account, wallet.revision, attempt]);
   const connection = <div className="rf-runtime-connection">
-    {wallet.status === "unavailable" && <p>Open this game in a browser with an EIP-1193 wallet to connect.</p>}
+    {wallet.status === "unavailable" && <><p>No browser wallet found. Enable your wallet extension or open this game in your wallet’s browser.</p><button type="button" onClick={() => { void session.connect(); }}>Check for wallet</button></>}
+    {wallet.status === "disconnected" && <p>Connect your wallet to find your Friends on Robinhood.</p>}
     {wallet.status === "connecting" && <p role="status">Connecting wallet…</p>}
-    {wallet.status === "wrong-network" && <p role="alert">Switch your wallet to Robinhood mainnet (4663).</p>}
+    {wallet.status === "switching-network" && <button type="button" disabled>Switching network… Check your wallet</button>}
+    {wallet.status === "wrong-network" && <p role="alert">Your wallet is on {wallet.chainId === 1 ? "Ethereum mainnet" : `chain ${wallet.chainId}`}. Switch to Robinhood mainnet (4663) to load your Friends.</p>}
     {wallet.error && <p role="alert">{wallet.error}</p>}
     {wallet.account && <p>Connected: {wallet.account}</p>}
-    {wallet.status !== "connected" && wallet.status !== "connecting" && wallet.wallets.map(value =>
+    {(wallet.status === "disconnected" || wallet.status === "error") && wallet.wallets.map(value =>
       <button key={value.id} type="button" onClick={() => { void session.connect(value.id); }}>{wallet.wallets.length === 1 ? "Connect wallet" : `Connect ${value.name}`}</button>)}
     {wallet.account && <button type="button" onClick={() => session.disconnect()}>Disconnect</button>}
-    {wallet.status === "connected" && <button type="button" onClick={() => setAttempt(value => value + 1)}>Refresh Friends</button>}
-    {wallet.status === "wrong-network" && <button type="button" onClick={() => { void session.refresh(); }}>Check network</button>}
+    {wallet.status === "connected" && <button type="button" onClick={() => setAttempt(value => value + 1)}>{valid?.error ? "Retry loading Friends" : "Refresh Friends"}</button>}
+    {wallet.status === "wrong-network" && <><button type="button" className="rf-frame-primary" onClick={() => { void session.switchNetwork(); }}>Switch to Robinhood</button><button type="button" onClick={() => { void session.refresh(); }}>Check network</button></>}
   </div>;
   return <ConnectedViewport {...props} selectedFriend={friend} account={wallet.account} chainId={wallet.chainId}
     publicClient={publicClient} revision={wallet.revision} walletClient={walletClient} assertActive={assertWalletActive} picker={{ friends, onSelectFriend: setSelected, connection,
-      friendsLoading: wallet.status === "connected" && !valid, friendsError: valid?.error }} />;
+      friendsLoading: wallet.status === "connected" && !valid, friendsError: valid?.error,
+      friendsHiddenCount: valid?.hiddenCount,
+      friendsEmptyMessage: valid && !valid.error ? valid.hiddenCount ? "No eligible Friends available in this wallet." : "No Rare Friends Generations NFTs found in this wallet on Robinhood." : null }} />;
 }
 
 export type ConnectedGameHostProps = {
@@ -112,7 +116,7 @@ export type ConnectedGameHostProps = {
   walletClient?: ChanceWalletClient;
   assertActive?: () => void;
 };
-type Picker = Pick<GameFrameProps, "friends" | "onSelectFriend" | "connection" | "friendsLoading" | "friendsError" | "onConnect">;
+type Picker = Pick<GameFrameProps, "friends" | "onSelectFriend" | "connection" | "friendsLoading" | "friendsError" | "friendsEmptyMessage" | "friendsHiddenCount" | "onConnect">;
 
 /** SDK frame for a project that already supplies connection and selection. */
 export function ConnectedGameHost(props: ConnectedGameHostProps) { return <ConnectedViewport {...props} />; }

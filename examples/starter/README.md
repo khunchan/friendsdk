@@ -1,13 +1,14 @@
 # Game component starter
 
-SDK version **v0.1**. This component is a small playable garden with a pack
+SDK version **v0.1.2**. This component is a small playable garden with a pack
 dispenser and an opening station. It has no application routes, navigation,
 wallet connection code or identity gate. The SDK runtime supplies those game
 infrastructure capabilities and the selected, verified owned Friend.
 
 Use the SDK's local game command from your current project to run this component.
 For an existing project, mount the SDK runtime in its existing game slot and
-provide this component and `game.json`. Do not add another website or frame.
+provide this component and `game.json`. Other project setups and layouts are
+welcome; retain the runtime's real ownership checks and sandbox boundary.
 See the package README for the exact installation and runtime command.
 
 Move with WASD, arrow keys, or a tap/click destination. Walk to the dispenser,
@@ -35,5 +36,6 @@ The source uses public SDK modules only. This example uses `GameWorld` to render
 the bundled garden props and the selected Friend's live sprites, with collision,
 depth sorting and keyboard/touch movement. `GameWorld`, these assets, the camera
 and the garden's visual style are optional starting points. Build your own
-setting, assets and renderer to suit the requested game. Preserve canonical Rare
-Friend sprites, SDK menus/actions, keyboard/touch controls and accessibility.
+setting, assets, character art, renderer and menus, with controls suited to your
+genre. Custom artwork does not replace the runtime's NFT ownership checks. Use
+the supported action client for economy actions and keep the game accessible.

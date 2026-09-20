@@ -2,6 +2,13 @@
 
 ## One-page game and economy design
 
+These are the fishing reference's rules, prices and interface choices. Other
+games may use different genres, layouts, character art and economies. Durable
+items, cosmetics, perks, upgrades and additional currencies are welcome when
+backed by or integrated with $RAREFRIENDS (RF). The supplied chance-game runtime
+and contracts currently support one RF-priced consumable and outcome table;
+document any capabilities your design needs beyond that reference.
+
 ### At a glance
 
 | | Rule |
@@ -105,8 +112,8 @@ Fish can always be sold at their original price. Their full value stays reserved
 
 ## Interface map
 
-These are interactions and menus inside the game component, not application
-routes or pages. Reuse an existing container in the current project.
+This reference presents these interactions as menus inside the game component.
+They are examples, not required layouts for other games or project setups.
 
 | World interaction or menu | Essential elements |
 |---|---|

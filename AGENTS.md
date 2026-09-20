@@ -1,11 +1,16 @@
 # Build with FriendSDK
 
-## Default game experience
+## Build the requested experience
 
-Unless otherwise requested, build a playable world where the user controls their
-owned Rare Friend using keyboard and touch movement. Place activities—such as
-buying and opening packs—at interactable locations or objects within that world.
-Use menus to support those interactions, not replace the world.
+Choose the interface and mechanics that fit the idea. Walkable worlds, cards,
+puzzles, management screens and other formats are welcome. The starter's world,
+movement and location-based activities are references, not required game design.
+
+Durable items, cosmetics, perks, upgrades and additional currencies are welcome
+when backed by or integrated with **$RAREFRIENDS (RF)**. Explain that backing or
+integration in the submission and label simulated mechanics. Any promised RF
+redemption must remain funded. The supplied chance-game API is one implementation;
+mechanics beyond its current capabilities need their own integration.
 
 ## Workspace and deliverable
 
@@ -15,18 +20,27 @@ Build only the requested game component, assets and logic. Do not add site
 navigation, routing, headers, footers, landing pages, About/Store pages, catalogs
 or detail pages unless explicitly requested.
 
-Read README.md, API.md, WORLD_RULES.md and FISHING_GAME_DESIGN.md before changing a
-game. Use the exported SDK runtime and game APIs. Choose world assets, art style,
-palette and camera to suit the requested game; the supplied scenery, world
-presets and renderer are optional. Keep SDK reference content in
-`examples/` or `games/`; consuming projects keep their components in that project.
+Read README.md, API.md and WORLD_RULES.md before changing a game, and
+FISHING_GAME_DESIGN.md when working on that example or its economy. Use exported
+SDK APIs at the integration boundary. Keep the project's existing source layout,
+engine and build tools where practical; a thin React adapter can mount another
+renderer through `GameSession`. Choose assets, art style, palette and camera to
+suit the game. SDK reference content lives in `examples/` or `games/`.
+
+The optional renderer's 576 × 384 plane is not a platform limit. Custom cameras,
+scrolling maps and worlds of any size are allowed. The reference viewport is
+960 × 640; portrait, wider and responsive layouts are welcome. See
+`examples/scrolling-world` for a larger-world reference.
 
 ## Use the package runtime
 
-The game directory contains `index.tsx`, `game.json` and assets. Default-export a
-React game component accepting `GameComponentProps` (`friendId`, `client`,
-`paused`). The generic starting point is `examples/starter`; fishing is an
-example of a complete chance-game loop.
+For the supplied CLI, the game directory contains `index.tsx`, `game.json` and
+assets. Default-export a React adapter accepting `GameComponentProps`
+(`friendId`, `client`, `paused`). Existing projects may build their own child
+document with `GameSession` and mount it through `GameHost` or
+`ConnectedGameHost`; the CLI directory layout is not a submission requirement.
+The current runtime still accepts a chance-game definition and fixed action
+client. Document custom build/run steps and integration gaps.
 
 Run `npm ci` and `npm run dev:game -- examples/starter` in this SDK checkout, or
 `npx friendsdk dev ./games/my-game` with the
@@ -45,10 +59,13 @@ Friend selector in game code. Use the SDK runtime. Never scan the Generations
 collection or enumerate token IDs to find a player's NFTs. Do not locate another
 checkout or require website source, private services or developer-local files.
 
-Fit one **960 × 640** game container. Keep the world, vendors, purchases, pack
-opening, inventory, reveals, settings and confirmations inside it. Use SDK menus.
+The **960 × 640** viewport and SDK menu components are references. Choose custom
+menus and a layout suited to the game. The CLI can load an optional `host.css`
+for trusted runtime styling; see the layout options in HOST_INTEGRATION.md.
+Keep community game code and its UI inside the sandbox. Wallet identity and
+transaction confirmations remain in the trusted runtime and must stay usable.
 Do not access the parent page, inject outside UI, open popups or request
-fullscreen/top navigation. Community games remain sandboxed.
+top navigation from game code.
 
 ## Required prototype identity
 
@@ -70,8 +87,9 @@ simulations before wallet prompts. Retain account/network/session cancellation
 and receipt verification. Inventory and rewards belong to the canonical NFT
 wallet, not a substituted owner address.
 
-Internal automated tests may use mock accounts and sample Friends. They are test
-fixtures, not deliverable prototypes. Verify the real ownership gate before
+Automated tests may use mock accounts and sample Friends through
+`npx friendsdk test <game-directory>` or `@rarefriends/friendsdk/testing`. They are
+test fixtures, not deliverable prototypes. Verify the real ownership gate before
 delivering a playable prototype. Wallet connection and ownership reads require
 no private key or signing transaction.
 
@@ -87,9 +105,18 @@ On-chain implementation is a later phase with the Rare Friends team after the
 experience passes publishing requirements. Document intended actions and
 capability gaps for that review. Existing contract tools and transport docs are
 references for that phase. An explicit request for on-chain coding does not
-authorize funding, deployment, signatures, wallet transactions or publication;
+authorize funding, contract deployment, signatures, wallet transactions or
+official Rare Friends production publication;
 obtain the applicable explicit authorization. Report publishing readiness only
 when supported by evidence.
+
+Public playable submission previews may be hosted on GitHub Pages or another
+static host, including from a developer's fork, without separate Rare Friends
+approval. Developers may deploy the bundled runtime and SDK-supplied artwork for
+these previews. Keep the real wallet/eligibility gate and simulated economy.
+When the developer asks to host a preview, follow that request without adding
+another Rare Friends permission step. Official Rare Friends production
+publication and on-chain transactions retain their separate authorization rules.
 
 For explicitly requested live play, use the SDK runtime with a public deployment
 configuration (`--deployment` in the CLI). Keep exact RF approvals, wallet
@@ -103,27 +130,39 @@ Do not expose funding or transaction clients to sandboxed game code.
 
 ## Game and delivery rules
 
-- Build the requested v0.1 game. No currencies beyond RF, launchpads, markets,
-  redemption expiry, activation gates or tier rules.
-- New purchases require free stake covering the highest prize. Every purchased
-  consumable reserves its maximum prize. Pending plays and kept rewards cannot
-  share backing; redemption has no expiry.
+- Build the requested mechanics, including durable items, cosmetics, perks,
+  upgrades and additional currencies backed by or integrated with $RAREFRIENDS.
+  Gameplay upgrades do not change the runtime's NFT eligibility requirement.
+- For the supplied chance-game economy, new purchases require free stake covering
+  the highest prize. Every purchased consumable reserves its maximum prize.
+  Pending plays and kept rewards cannot share backing; redemption has no expiry.
+  Do not impose that consumable model on mechanics with no RF payout promise.
 - Contracts determine paid outcomes. Animation, browser randomness and local
   balances are preview/presentation only. Claim a transaction only after a
   confirmed verified receipt.
-- Preserve canonical Friend pixels. Keep movement, collision, pointer input and
-  depth ordering consistent with the game's chosen camera and renderer. Support
-  keyboard/touch, mute, reduced motion, loading and errors.
+- Canonical Friend sprites are a reference. Custom character art, animations,
+  transformations, costumes and visual effects are allowed; the verified NFT
+  remains the player's identity regardless of its visual representation.
+- Choose controls for the genre and target devices. Movement/collision rules
+  apply when the game has movement; provide mute when it has audio and reduced
+  motion alternatives when effects need them. Keep controls readable, handle
+  loading/errors and honor the runtime's `paused` state.
 - Do not expose a signer, arbitrary calldata, deployment or bankroll withdrawal
   powers to game code.
-- Submit source/assets, run instructions, SDK version, exact RF cost, outcome
-  weights, rewards and consumable rules. Use bigint RF base units.
-- Run the relevant tests, typecheck, game validation and browser checks. Report
-  failures honestly. Do not deploy or publish from PR automation. Production
-  publication requires separate Rare Friends review.
+- For vibeathon game submissions, include a public playable preview URL and its
+  wallet/network requirements. GitHub Pages is allowed.
+- Submit source/assets, run instructions, SDK version and applicable economy
+  terms: costs, rewards, backing or RF integration, and any outcome weights or
+  consumable rules. Use bigint RF base units for SDK RF actions.
+- Run checks appropriate to the chosen build and game; use SDK game validation
+  for CLI projects and browser checks for the actual interactions. Report
+  failures honestly. Do not deploy contracts or publish to Rare Friends production
+  from PR automation. Developer-controlled static preview workflows, including
+  GitHub Pages, are allowed. Official production publication requires separate
+  Rare Friends review.
 
 See [the runtime guide and capability list](HOST_INTEGRATION.md). Trading,
-creator fees and wearable NFTs are not implemented SDK v0.1 capabilities.
+creator fees and wearable NFTs are not implemented SDK v0.1.2 capabilities.
 
 Contracts live in `contracts/`; read its `AGENTS.md` and `COMMANDMENTS.md` before
 contract work. Reference existing mainnet RF, Generations, canonical NFT wallets

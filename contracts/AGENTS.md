@@ -1,6 +1,6 @@
 # Standalone FriendSDK contracts
 
-Read [COMMANDMENTS.md](COMMANDMENTS.md) and the repository's v0.1 game rules before changing Solidity. The commandments' Genesis-specific storage list and owner methods describe that deployed contract; this package implements new game contracts only. Apply their house style and minimal-scope rules here.
+Read [COMMANDMENTS.md](COMMANDMENTS.md) and the repository's game rules before changing Solidity. The commandments' Genesis-specific storage list and owner methods describe that deployed contract; this package implements new game contracts only. Apply their house style and minimal-scope rules here.
 
 - Keep only the game, its bound consumable, external-call interfaces, and their tests. No original Rare Friends protocol implementation belongs in this package. Test doubles belong in `test/` only.
 - RF, Generations, its canonical NFT wallet, and Dice Protocol are existing mainnet dependencies. Do not redeploy or modify them.

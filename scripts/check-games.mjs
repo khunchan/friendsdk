@@ -1,16 +1,15 @@
-import { readFile, readdir, access } from 'node:fs/promises';
+import { readFile, readdir, access, realpath } from 'node:fs/promises';
 import { resolve, relative, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { parseChanceGame, expectedReward, maximumPrize } from '../dist/game.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const games = resolve(root, 'games');
-const entries = await readdir(games, { withFileTypes: true });
-const paths = ['examples/starter', 'examples/fishing', ...entries.filter(entry => entry.isDirectory()).map(entry => `games/${entry.name}`)];
+const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 
-for (const path of paths) {
-  const directory = resolve(root, path);
+/** Check one game in either an SDK checkout or a consuming project, without writing output. */
+export async function checkGame(path) {
+  const directory = resolve(path);
   const game = parseChanceGame(JSON.parse(await readFile(resolve(directory, 'game.json'), 'utf8')));
   await access(resolve(directory, 'README.md'));
   const result = await build({
@@ -21,6 +20,12 @@ for (const path of paths) {
     assetNames: 'assets/[name]-[hash]',
     plugins: [{ name: 'game-boundary', setup(builder) {
       builder.onResolve({ filter: /^@rarefriends\/friendsdk\/host$/ }, () => ({ errors: [{ text: 'Wallet transport belongs to the SDK runtime, not game code.' }] }));
+      builder.onResolve({ filter: /^@rarefriends\/friendsdk(?:\/|$)/ }, args => {
+        const name = args.path.replace('@rarefriends/friendsdk', '.') || '.';
+        const entry = packageJson.exports[name];
+        if (!entry) return { errors: [{ text: `Unknown SDK export: ${args.path}` }] };
+        return { path: resolve(root, typeof entry === 'string' ? entry : entry.import) };
+      });
     } }],
   });
   for (const source of Object.keys(result.metafile.inputs)) {
@@ -29,11 +34,27 @@ for (const path of paths) {
     }
   }
   // Submissions cannot silently pull private platform files into their build.
-  if (path.startsWith('games/')) for (const source of Object.keys(result.metafile.inputs)) {
+  for (const source of Object.keys(result.metafile.inputs)) {
     const full = resolve(root, source), local = relative(directory, full);
     if (!local.startsWith(`..${sep}`) && local !== '..') continue;
-    if (full.startsWith(resolve(root, 'dist') + sep) || full.startsWith(resolve(root, 'src') + sep) || full.startsWith(resolve(root, 'node_modules') + sep)) continue;
+    // Public SDK stylesheet exports resolve into assets/ alongside src/ and dist/.
+    if (['dist', 'src', 'assets', 'node_modules'].some(directory => full.startsWith(resolve(root, directory) + sep))) continue;
+    if (full.split(sep).includes('node_modules')) continue;
     throw new Error(`${path}: undeclared source outside the game/SDK: ${source}`);
   }
-  console.log(`${path}: valid; expected reward ${expectedReward(game)}; maximum ${maximumPrize(game)} RF base units; build ${result.outputFiles.reduce((n, file) => n + file.contents.length, 0)} bytes`);
+  return `${path}: valid; expected reward ${expectedReward(game)}; maximum ${maximumPrize(game)} RF base units; build ${result.outputFiles.reduce((n, file) => n + file.contents.length, 0)} bytes`;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(await realpath(process.argv[1])).href) {
+  for (const parent of ['examples', 'games']) {
+    for (const entry of await readdir(resolve(root, parent), { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const path = `${parent}/${entry.name}`;
+      if (parent === 'examples') {
+        try { await access(resolve(root, path, 'game.json')); }
+        catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+      }
+      console.log(await checkGame(resolve(root, path)));
+    }
+  }
 }

@@ -1,4 +1,4 @@
-# Embedded fishing example · FriendSDK v0.1
+# Embedded fishing example · FriendSDK v0.1.2
 
 This example configures the reusable `GameHost` runtime with the fishing game.
 `GameHost` provides wallet connection, owned Friend discovery and selection,
@@ -6,16 +6,15 @@ fresh ownership/eligibility checks, the 960 × 640 frame, sandbox, simulated
 ledger and in-frame confirmations. Fishing supplies the playable world and
 its economy definition.
 
-Build the requested game component in the user's current project directory.
-The default game is a world where the user moves their owned Rare Friend with
-keyboard and touch controls. Place activities at interactable world locations
-or objects; use menus to support those interactions. Surrounding website pages
-are included only when explicitly requested.
+The fishing reference uses a world where the player moves their owned Rare
+Friend to activity locations with keyboard and touch controls. Other project
+setups, genres and interfaces can use the same runtime.
 
 The runtime accepts games with their own setting, assets, visual style, camera
 and renderer. Fishing's scenery and the SDK's `GameWorld`, world assets and presets
-are optional example choices. Keep the selected Rare Friend's canonical sprites,
-SDK menus/actions, keyboard/touch controls and accessibility in the game frame.
+are optional example choices. Custom character art and menus are welcome; use
+accessible controls suited to the genre while keeping the real NFT eligibility
+gate, sandbox boundary and supported action client.
 
 ## Use the runtime
 
@@ -76,7 +75,10 @@ Wallet connection and eligibility reads require no signing transaction. The
 runtime simulates RF balances and game actions. Keep on-chain game implementation
 and custom Solidity deferred unless explicitly requested; the later phase is
 undertaken with the Rare Friends team after publishing requirements are met.
-Deployment, transactions and publication require their applicable authorization.
+Contract deployment, transactions and official Rare Friends production publication
+require their applicable authorization. Public simulated previews on GitHub Pages
+are allowed without separate Rare Friends approval; see the
+[hosting instructions](../../README.md#build-and-share-a-preview).
 See the [prototype requirements](../../README.md#required-prototype-identity-and-interface).
 
 ## Fishing configuration
@@ -89,8 +91,8 @@ are in [game.json](../fishing/game.json) and
 [the fishing design](../../FISHING_GAME_DESIGN.md).
 
 The component includes a vendor, fishing location, inventory, reveals, odds,
-sound and reduced motion. Hats, trading and creator fees are not implemented
-SDK capabilities.
+sound and reduced motion. This reference does not implement cosmetics, trading
+or creator fees; other ideas may need capabilities beyond the current runtime.
 
 ## Verify
 

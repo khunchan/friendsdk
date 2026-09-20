@@ -36,7 +36,7 @@ const MAX_OWNED_FRIENDS = 10_000;
  */
 export async function readOwnedFriends(
   client: OwnedFriendsClient, account: Address, options: OwnedFriendsOptions = {},
-): Promise<Readonly<{ friends: readonly OwnedFriend[]; blockNumber: bigint }>> {
+): Promise<Readonly<{ friends: readonly OwnedFriend[]; blockNumber: bigint; hiddenCount: number }>> {
   const deployment = options.deployment ?? GENERATION_SPRITE_MANIFEST;
   if (!validAddress(account)) throw new TypeError("Owned Friend discovery requires a nonzero connected account.");
   if (!validAddress(deployment.generations) || !Number.isSafeInteger(deployment.chainId) || deployment.chainId < 1) {
@@ -59,7 +59,7 @@ export async function readOwnedFriends(
   }
   if (balance === 0n) {
     await checkChain();
-    return Object.freeze({ friends: Object.freeze([]), blockNumber });
+    return Object.freeze({ friends: Object.freeze([]), blockNumber, hiddenCount: 0 });
   }
 
   const query = { address: deployment.generations, event: TRANSFER, fromBlock: 0n, toBlock: blockNumber, strict: true } as const;
@@ -126,5 +126,5 @@ export async function readOwnedFriends(
     friends.push(...group.filter(friend => friend !== null));
   }
   await checkChain();
-  return Object.freeze({ friends: Object.freeze(friends), blockNumber });
+  return Object.freeze({ friends: Object.freeze(friends), blockNumber, hiddenCount: ids.length - friends.length });
 }

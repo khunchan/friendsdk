@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
-import { buildGame, createGameServer } from '../scripts/dev-game.mjs';
+import { buildGame } from '@rarefriends/friendsdk/build';
+import { createGameServer } from '@rarefriends/friendsdk/serve';
 
 const exec = promisify(execFile);
 
@@ -23,6 +24,7 @@ test('installed-style CLI creates and builds a game in the current project and r
     await assert.rejects(exec(process.execPath, [command, 'init', 'games/my-game'], { cwd: project }));
     assert.equal(await readFile(component, 'utf8'), original);
     await exec(process.execPath, [command, 'build', 'games/my-game'], { cwd: project });
+    assert.match((await exec(process.execPath, [command, 'check', 'games/my-game'], { cwd: project })).stdout, /valid;/);
     for (const name of ['index.html', 'runtime.js', 'game.html', 'game.js']) {
       assert((await stat(join(project, 'games/my-game/.friendsdk', name))).size > 0);
     }

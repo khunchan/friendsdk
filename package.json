@@ -1,9 +1,9 @@
 {
   "name": "@rarefriends/friendsdk",
-  "version": "0.1.0",
-  "description": "Rare Friends game building blocks and v0.1 chance-game reference",
+  "version": "0.1.2",
+  "description": "Rare Friends game building blocks and chance-game reference",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "engines": {
     "node": ">=22.0.0"
   },
@@ -30,7 +30,9 @@
     "contracts/README.md",
     "contracts/AGENTS.md",
     "contracts/COMMANDMENTS.md",
-    "tsconfig.json"
+    "tsconfig.json",
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "sideEffects": [
     "**/*.css"
@@ -128,7 +130,19 @@
       "import": "./dist/world-view.js"
     },
     "./runtime.css": "./assets/runtime.css",
-    "./world-view.css": "./assets/world-view.css"
+    "./world-view.css": "./assets/world-view.css",
+    "./build": {
+      "types": "./scripts/dev-game.d.mts",
+      "import": "./scripts/dev-game.mjs"
+    },
+    "./serve": {
+      "types": "./scripts/dev-game.d.mts",
+      "import": "./scripts/dev-game.mjs"
+    },
+    "./testing": {
+      "types": "./scripts/testing.d.mts",
+      "import": "./scripts/testing.mjs"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build-fishing.mjs && node scripts/build-embedded.mjs",
@@ -159,7 +173,8 @@
   },
   "peerDependencies": {
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "playwright": "^1.63.0"
   },
   "devDependencies": {
     "@types/react": "19.1.12",
@@ -171,5 +186,10 @@
   },
   "bin": {
     "friendsdk": "./scripts/dev-game.mjs"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    }
   }
 }

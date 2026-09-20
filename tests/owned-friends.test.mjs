@@ -51,6 +51,7 @@ test('discovers only owner-filtered held IDs, handles self transfers, excludes g
   const f = fixture();
   const result = await readOwnedFriends(f.client, OWNER);
   assert.equal(result.blockNumber, 100n);
+  assert.equal(result.hiddenCount, 1);
   assert.deepEqual(result.friends, [
     { id: 2n, label: 'Friend #2', kind: 'owned', walletAddress: WALLET, generation: 2 },
     { id: 4n, label: 'Friend #4', kind: 'owned', walletAddress: WALLET, generation: 1 },
@@ -65,7 +66,9 @@ test('discovers only owner-filtered held IDs, handles self transfers, excludes g
 
 test('zero NFT balance requires no history or per-token reads', async () => {
   const f = fixture(); f.state.balance = 0n;
-  assert.deepEqual((await readOwnedFriends(f.client, OWNER)).friends, []);
+  const result = await readOwnedFriends(f.client, OWNER);
+  assert.deepEqual(result.friends, []);
+  assert.equal(result.hiddenCount, 0);
   assert.equal(f.calls.length, 1);
   assert.equal(f.calls[0].functionName, 'balanceOf');
 });
