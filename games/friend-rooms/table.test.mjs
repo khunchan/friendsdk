@@ -68,14 +68,18 @@ test('result text shows the gap after a loss', () => {
   assert.equal(table.describeResult({ friendNumber: 92, highest: 92, gap: 0, won: true, bots: [] }), 'Your 92 is the highest number.');
 });
 
-test('the table money follows the game definition: ten tickets in, ninety percent to the winner, ten percent burned', () => {
+test('the table money follows the game definition: each ticket splits into a pot share and a 10% table fee', () => {
   const price = BigInt(game.price), prize = game.outcomes.reduce((max, outcome) => BigInt(outcome.reward) > max ? BigInt(outcome.reward) : max, 0n);
   const economy = table.tableEconomy(price, prize);
-  assert(economy, 'game.json describes a 10% burn table');
-  assert.equal(economy.pot, 10n * price); assert.equal(economy.prize, 9n * price);
-  assert.equal(economy.burn, price); assert.equal(economy.burnShare, price / 10n);
-  assert.equal(economy.prize + economy.burn, economy.pot);
-  assert.equal(table.tableEconomy(price, 8n * price), null, 'a different payout is not shown as a 10% burn table');
+  assert(economy, 'game.json describes a table with a 10% fee');
+  assert.equal(economy.fee, price / 10n, 'the table fee is a tenth of the ticket');
+  assert.equal(economy.entry, price - economy.fee, 'the rest of the ticket goes into the pot');
+  assert.equal(economy.entry + economy.fee, price);
+  assert.equal(economy.pot, 10n * economy.entry, 'ten entries fill the pot');
+  assert.equal(economy.pot, prize, 'the highest number takes the whole pot, which is exactly the top prize');
+  assert.equal(economy.tableFees, 10n * economy.fee);
+  assert.equal(economy.pot + economy.tableFees, 10n * price, 'pot plus fees equal what ten seats pay in');
+  assert.equal(table.tableEconomy(price, 8n * price), null, 'a different payout is not shown as a table with a 10% fee');
   assert.equal(table.tableEconomy(price, 0n), null);
 });
 
@@ -99,7 +103,7 @@ test('10,000 plays through the SDK preview client match the numbers in the READM
   const result = await simulate({ plays: 10_000, seed: 20260920 });
   assert.equal(result.wins, 989); assert.equal(result.spentRf, 10_000); assert.equal(result.redeemedRf, 8_901);
   assert.equal(result.tableChecks, 10_000);
-  assert.equal(result.modelBurnAtTablesRf, 10_000); assert.equal(result.modelBurnShareOfPlayerRf, 1_000);
+  assert.equal(result.wholeTableFeesRf, 10_000); assert.equal(result.playerTableFeesRf, 1_000);
   const other = await simulate({ plays: 10_000, seed: 7 });
   assert(Math.abs(other.winRate - 0.1) < 0.015, `win rate ${other.winRate} stays near 10%`);
   assert(Math.abs(other.returnRate - 0.9) < 0.14, `return ${other.returnRate} stays near 90%`);

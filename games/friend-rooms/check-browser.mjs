@@ -100,7 +100,7 @@ try {
 
     // Working door: rules, then a real SDK flow: buy, use, then the Friend plays every game on its own.
     const confirm = () => page.getByRole('button', { name: 'Confirm preview', exact: true }).click();
-    const receiptRow = async label => (await child.getByRole('row', { name: new RegExp(`^${label}`) }).textContent()).replace(label, '').trim();
+    const receiptRow = async label => (await child.getByRole('row', { name: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`) }).textContent()).replace(label, '').trim();
     await walk([340, 322]);
     await child.getByRole('button', { name: /^Room 100 RF/ }).click();
     await child.getByText(/Room 100 RF · preview tickets 1 RF \(SDK preview wallet is fixed at 20 RF\)\./).waitFor();
@@ -110,7 +110,9 @@ try {
     const range = child.getByLabel('Games to play');
     assert.equal(await range.getAttribute('max'), '11', 'The SDK prize backing limits one run to 11 games');
     await range.fill('3');
-    await child.getByText(/two SDK prompts: buy the tickets, then use them/).waitFor();
+    await child.getByText(/^3 games · 3 RF, including 0\.3 RF table fee \(burned in the model\)\. SIMULATED\. You confirm two SDK prompts/).waitFor();
+    await child.getByText('Each 1 RF ticket splits at entry: 0.9 RF goes into the pot and 0.1 RF is a table fee (burned in the model).', { exact: true }).waitFor();
+    await child.getByText('The pot is 9 RF. The highest number takes all of it.', { exact: true }).waitFor();
     await button('Play 3 games · 3 RF').click();
     await confirm(); await confirm();
     // The receipt never opens by itself: the last round stays visible until the player asks for it.
@@ -124,8 +126,8 @@ try {
     assert(wins >= 0 && wins <= 3);
     assert.equal(await receiptRow('Tickets spent'), '3 RF SIMULATED');
     assert.equal(await receiptRow('Prizes won'), `${9 * wins} RF SIMULATED`);
-    assert.equal(await receiptRow('Burned at the tables'), '3 RF model');
-    assert.equal(await receiptRow('Your share of the burn'), '0.3 RF model');
+    assert.equal(await receiptRow('Table fees burned (model)'), '0.3 RF model');
+    assert.equal(await receiptRow('Fees of the whole tables, bots included (model)'), '3 RF model');
     await button('Close').click();
     // The last table: ten unique numbers, and the highest-number marker agrees with the SDK result.
     const numbers = (await child.locator('.fr-sr li').evaluateAll(items => items.map(item => Number(item.dataset.number))));

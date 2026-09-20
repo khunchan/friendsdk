@@ -248,7 +248,7 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
         <span className="fr-mobile-hint">Tap to walk · E / tap near a door</span></p>
     </div> : <div className="fr-room" inert={Boolean(menu) || paused || undefined}>
       <RoomScene friendId={friendId} deal={round?.deal ?? null} revealed={revealed} reducedMotion={reducedMotion}
-        potLabel={rf(economy.pot)} prizeLabel={rf(economy.prize)} />
+        potLabel={rf(economy.pot)} feeLabel={rf(economy.tableFees)} />
       {hud}
       <p className="fr-room-title">{round ? `Room ${designRf} RF · round ${round.number} of ${progress.total}` : `Room ${designRf} RF`}</p>
       <p className="fr-result">{round && revealed >= SEATS
@@ -274,7 +274,8 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
         <ul>
           <li>The table has {SEATS} seats: your Friend and {SEATS - 1} simulated bots.</li>
           <li>Everyone draws a unique number from 1 to 100. The highest number wins.</li>
-          <li>The pot is {SEATS} tickets. The winner takes {rf(economy.prize)} (90%); 10% is burned in the model.</li>
+          <li>Each {rf(definition.price)} ticket splits at entry: {rf(economy.entry)} goes into the pot and {rf(economy.fee)} is a table fee (burned in the model).</li>
+          <li>The pot is {rf(economy.pot)}. The highest number takes all of it.</li>
           <li>The SDK result decides your outcome first. The table is then dealt to match it.</li>
         </ul>
         <table><thead><tr><th>Result</th><th>Chance</th><th>Prize</th></tr></thead><tbody>{definition.outcomes.map(item =>
@@ -285,7 +286,7 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
         <label>Games to play: <b>{games}</b>
           <input type="range" min={1} max={Math.max(maxGames, 1)} value={games} disabled={maxGames < 2 || busy || paused} aria-label="Games to play"
             onChange={event => setGames(Number(event.target.value))} /></label>
-        <p>Total: {rf(definition.price * BigInt(games))} (SIMULATED). You confirm {missing > 0 ? "two SDK prompts: buy the tickets, then use them" : "one SDK prompt: use your tickets"}. The Friend then plays all games on its own.</p>
+        <p>{games} {games === 1 ? "game" : "games"} · {rf(definition.price * BigInt(games))}, including {rf(economy.fee * BigInt(games))} table fee (burned in the model). SIMULATED. You confirm {missing > 0 ? "two SDK prompts: buy the tickets, then use them" : "one SDK prompt: use your tickets"}. The Friend then plays all games on its own.</p>
         <button type="button" className="rf-frame-primary" disabled={Boolean(blocked) || busy || paused} onClick={() => void start(games)}>Play {games} {games === 1 ? "game" : "games"} · {rf(definition.price * BigInt(games))}</button>
         {blocked && <p>{blocked}</p>}
         <p>Each ticket reserves {rf(prize)} of prize backing in the SDK preview, so a run is limited to {maxGames} {maxGames === 1 ? "game" : "games"} right now.</p>
@@ -301,10 +302,10 @@ export default function FriendRooms({ friendId, client, paused }: GameComponentP
           <tr><th>Win streak (best)</th><td>{career.streak} ({career.bestStreak})</td></tr>
           <tr><th>Tickets spent</th><td>{rf(definition.price * BigInt(career.played))} SIMULATED</td></tr>
           <tr><th>Prizes won</th><td>{rf(prize * BigInt(career.wins))} SIMULATED</td></tr>
-          <tr><th>Burned at the tables</th><td>{rf(economy.burn * BigInt(career.played))} model</td></tr>
-          <tr><th>Your share of the burn</th><td>{rf(economy.burnShare * BigInt(career.played))} model</td></tr>
+          <tr><th>Table fees burned (model)</th><td>{rf(economy.fee * BigInt(career.played))} model</td></tr>
+          <tr><th>Fees of the whole tables, bots included (model)</th><td>{rf(economy.tableFees * BigInt(career.played))} model</td></tr>
         </tbody></table>
-        <p>The burn is a model of a future room contract. SDK v0.1 does not burn RF; the 10% stays as game backing.</p>
+        <p>Table fees are a model of a future room contract. SDK v0.1 does not burn RF: the whole ticket stays in the preview ledger as game backing.</p>
         {winsWaiting > 0n && <p>Winnings waiting: {rf(winningsWaiting)}. <button type="button" className="rf-frame-primary" disabled={busy || paused} onClick={() => void collect()}>Collect winnings</button></p>}
         {unfinished.length > 0 && <p>{unfinished.length} unfinished {unfinished.length === 1 ? "round remains" : "rounds remain"}. Use Resume at the table.</p>}
         <button type="button" onClick={() => setMenu(null)}>Close</button>

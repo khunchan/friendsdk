@@ -58,7 +58,7 @@ export async function simulate({ plays = 10_000, seed } = {}) {
     plays, seed: seed ?? null, wins, winRate: wins / plays, winRateInterval95: wilson(wins, plays),
     spentRf: Number(spent / RF), redeemedRf: Number(redeemed / RF), returnRate: Number(redeemed) / Number(spent),
     averageRewardPerTicketRf: Number(redeemed) / Number(RF) / plays, tableChecks,
-    modelBurnAtTablesRf: Number(economy.burn * BigInt(plays) / RF), modelBurnShareOfPlayerRf: Number(economy.burnShare * BigInt(plays)) / Number(RF),
+    playerTableFeesRf: Number(economy.fee * BigInt(plays)) / Number(RF), wholeTableFeesRf: Number(economy.tableFees * BigInt(plays) / RF),
   };
 }
 

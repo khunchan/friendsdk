@@ -4,7 +4,7 @@ SDK version **v0.1**. Your Rare Friend walks through a black-and-white isometric
 room door. Behind the working door, ten seats share one table: your Friend and nine simulated bots. Every seat draws a
 unique number from 1 to 100 and the highest number wins.
 
-**Everything is simulated.** Prices, balances, prizes and the burn use the SDK preview ledger or a labelled model.
+**Everything is simulated.** Prices, balances and prizes use the SDK preview ledger; the table fee and its burn are a labelled model.
 Nothing is sent on-chain. An owned Generations NFT is still required; the SDK runtime checks it.
 
 ## Screenshots
@@ -44,7 +44,8 @@ simulated. Regenerate them with `node games/friend-rooms/capture-media.mjs` (nee
 | Lower number | 90% (9,000 basis points), prize 0 RF |
 | Expected reward | 0.9 RF per ticket (90% return) |
 | Table | 10 seats: your Friend plus 9 simulated bots, always full |
-| Pot | 10 tickets (10 RF). The winner takes 9 RF (90%); 10% (1 RF) is burned in the model |
+| Ticket split | Each 1 RF ticket splits at entry: 0.9 RF goes into the pot and 0.1 RF (10%) is a table fee, burned in the model |
+| Pot | 10 seats x 0.9 RF = 9 RF. The highest number takes the whole pot, which is exactly the 9 RF prize |
 | Backing | Each ticket reserves 9 RF of prize backing, so one run is limited to 11 games in the SDK preview |
 | Redemption | Fixed value, no expiry, paid to the selected Friend's wallet in a future approved integration |
 
@@ -52,8 +53,10 @@ simulated. Regenerate them with `node games/friend-rooms/capture-media.mjs` (nee
 a win gives your Friend the highest number, a loss gives it one of the lower numbers, chosen evenly. Because one table
 seat in ten wins, this matches the 10% chance in `game.json`. The numbers and bots are presentation only.
 
-**The burn is a model.** SDK v0.1 does not burn RF: the 10% stays as game backing. The receipt labels the burn as a
-model of a future room contract. Bot tickets are simulated too.
+**The table fee is a model.** The fee is separated from the pot when you enter, not taken from the winnings at the end;
+the odds and amounts are the same either way. SDK v0.1 does not burn RF: the whole 1 RF ticket stays in the preview ledger
+as game backing, and the SDK pays the 9 RF prize from it. The menus and the receipt label the fee "burned in the model"
+because it models a future room contract. Bot tickets and bot fees are simulated too.
 
 ## Measured behaviour
 
@@ -71,8 +74,8 @@ fixed before the run and not chosen afterwards. Two one-off runs with the SDK's 
 88.65% return over 10,000 plays, and 9.93% and 89.34% over 100,000 plays. With 10,000 plays the win rate has a standard
 error of about 0.3 points and the return about 2.7 points, so differences of this size are expected.
 
-In the model, the tables of those 10,000 games burned 10,000 RF in total (10% of each 10 RF pot), and your Friend's share
-of that was 1,000 RF. This burn is a model; the SDK preview does not burn RF.
+In the model, the table fees of those 10,000 games came to 10,000 RF in total (1 RF per table, simulated bots included), and
+your Friend's own fees were 0.1 RF per game, 1,000 RF. These fees are a model; the SDK preview does not burn RF.
 
 Reproduce it from the SDK root: `node games/friend-rooms/simulate.mjs 10000 20260920` (leave out the seed to use the SDK's
 randomness). `table.test.mjs` pins the seeded numbers above, so this section cannot drift from the code.
@@ -89,10 +92,11 @@ pretends otherwise: every amount is labelled SIMULATED and the locked doors say 
 | A room contract with one allowance | Approve once, then join rooms without a prompt each time | Preview ledger; the SDK asks to confirm buy and use |
 | A keeper bot and unattended settlement | Start a round when the room is full, without a player click | The player's own client settles |
 | One Dice randomness per round | A single random value seeds the shuffle for every player | Browser randomness; numbers are dealt to match the SDK result |
-| Gas and randomness paid from the round fee | Players pay only the ticket | Not modelled |
-| Burning the remainder of the fee | Costs are paid first, the rest is burned | A labelled model, not executed |
+| A table fee separated from the pot at entry | Each ticket is split when a player joins: the pot share goes to the pot and the fee is set aside. The pot of a room that never fills can then be refunded in full | Shown in the menus and the receipt only |
+| Gas and randomness paid from the table fee | Players pay only the ticket | Not modelled |
+| Burning the remainder of the fee at once | The fee pays the round's costs first and the rest is burned immediately, not at the end | A labelled model, not executed |
 | Reading shared room state from game code | Occupants and how full a room is | Not available |
-| Larger rooms | 100 seats; winners = ceil(participants / 10): 1-10 players give 1 winner, 11-20 give 2, and so on up to 91-100 giving 10; 10% of the pot is burned and 90% is shared equally between the winners | Ten seats and one winner |
+| Larger rooms | 100 seats; winners = ceil(participants / 10): 1-10 players give 1 winner, 11-20 give 2, and so on up to 91-100 giving 10; each ticket carries a 10% table fee (burned) and the pot, the other 90%, is shared equally between the winners | Ten seats and one winner |
 | A preview wallet larger than 20 RF | Play a real 100 RF ticket | The room runs at 1/100 scale |
 | Friend traits as a style source | Scenery, Floor and Generation could style the hall | One hall (Circuit Courtyard) for every Friend |
 
@@ -116,17 +120,18 @@ contracts, and unattended settlement.
 ### Minimum ticket size (estimate)
 
 Prices for ETH and RF move a lot, so the rule is a formula, not a fixed number. A room is viable while its round costs are
-no more than its round fee:
+no more than its table fees:
 
 ```text
 round costs (USD) = (gas + RNG fee, in ETH) x ETH price
-round fee   (USD) = 10% x seats x ticket (RF) x RF price
-viable when round costs <= round fee, so
+table fees  (USD) = 10% x seats x ticket (RF) x RF price
+viable when round costs <= table fees, so
 minimum ticket (RF) = round costs / (10% x seats x RF price)
 ```
 
-Fee model: the 10% fee first pays the actual costs of the round; whatever is left is burned. If costs exceed the fee, the
-round should not start.
+Fee model: the 10% table fee is separated from the pot when a player joins. It pays the actual costs of the round (gas and
+randomness) first, and whatever is left is burned immediately. The pot is never touched, so the pot of a room that does not
+fill can be refunded in full. If costs exceed the fees, the round should not start.
 
 *Estimate as of 2026-09-20. Inputs: ETH about $2,450 and 100,000 RF about 0.128 ETH (a community tracker, not independently
 verified), so 1 RF is about $0.0031. The SDK caps a Dice request at 0.000025 ETH (about $0.06); gas is an assumption, and
@@ -134,11 +139,11 @@ round costs are taken as about $0.10 in total. Rare Friends plans to subsidize r
 
 With 10 seats:
 
-| Ticket | Pot | Round fee (10%) | Fee / costs | Burned after costs |
+| Ticket | Paid in by 10 seats | Table fees (10%) | Fees / costs | Burned after costs |
 | ---: | ---: | ---: | ---: | ---: |
 | 1 RF | $0.03 | $0.003 | 0.03x, not viable | none |
 | 10 RF | $0.31 | $0.031 | 0.31x, not viable | none |
-| 100 RF | $3.14 | $0.314 | 3.1x | about 68% of the fee |
+| 100 RF | $3.14 | $0.314 | 3.1x | about 68% of the fees |
 | 1,000 RF | $31.36 | $3.14 | 31x | about 97% |
 | 10,000 RF | $313.60 | $31.36 | 314x | about 100% |
 | 100,000 RF | $3,136 | $313.60 | 3,136x | about 100% |
@@ -181,7 +186,7 @@ The browser check needs `npx playwright install chromium` once.
 ## Known limits
 
 - The SDK preview wallet is fixed at 20 RF, so tickets cost 1 RF (Room 100 RF at 1/100 scale) and one run is limited to 11 games by the prize backing.
-- Bots, the shared table and the burn are simulated; SDK v0.1 has no shared rooms and does not burn RF.
+- Bots, the shared table and the table fee burn are simulated; SDK v0.1 has no shared rooms and does not burn RF.
 - Progress resets when the preview session ends.
 - On a 360 px wide screen the SDK container is only 360 x 240, so the table is small.
 - Automated checks use a mocked wallet and a sample Friend. The builder played more than 40 games by hand with a real wallet and two Friends: Generation 2 (Cellular) and Generation 4 (Skeleton).

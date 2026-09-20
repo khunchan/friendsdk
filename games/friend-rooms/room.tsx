@@ -114,7 +114,7 @@ function drawFriend(ctx: CanvasRenderingContext2D, sprites: GenerationSprites, f
   ctx.restore();
 }
 
-function drawTable(ctx: CanvasRenderingContext2D, potLabel: string, prizeLabel: string) {
+function drawTable(ctx: CanvasRenderingContext2D, potLabel: string, feeLabel: string) {
   const { half, halfDepth, lift } = TABLE, left = CENTER.x - half, top = CENTER.y - halfDepth - lift, width = half * 2, height = halfDepth * 2;
   ctx.fillStyle = INK;
   ctx.fillRect(left + 12, top + height + lift, 14, 22); ctx.fillRect(left + width - 26, top + height + lift, 14, 22);
@@ -127,23 +127,23 @@ function drawTable(ctx: CanvasRenderingContext2D, potLabel: string, prizeLabel: 
   ctx.fillStyle = INK; ctx.fillRect(left + 10, top + 8, width - 20, 2); ctx.fillRect(left + 10, top + height - 10, width - 20, 2);
   ctx.fillRect(left + 10, top + 8, 2, height - 16); ctx.fillRect(left + width - 12, top + 8, 2, height - 16);
   drawText(ctx, `POT ${potLabel}`, CENTER.x - 118, top + 16, 3, INK);
-  drawText(ctx, `WINNER ${prizeLabel}`, CENTER.x + 112, top + 16, 3, INK);
+  drawText(ctx, `FEES ${feeLabel}`, CENTER.x + 112, top + 16, 3, INK);
 }
 
 export type RoomSceneProps = Readonly<{
   friendId: bigint; deal: Deal | null;
   /** Numbers opened so far in reveal order: the nine bots first, the Friend last. */
   revealed: number;
-  reducedMotion: boolean; potLabel: string; prizeLabel: string;
+  reducedMotion: boolean; potLabel: string; feeLabel: string;
 }>;
 
-export function RoomScene({ friendId, deal, revealed, reducedMotion, potLabel, prizeLabel }: RoomSceneProps) {
+export function RoomScene({ friendId, deal, revealed, reducedMotion, potLabel, feeLabel }: RoomSceneProps) {
   const wrap = useRef<HTMLDivElement>(null), canvas = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ width: 960, height: 640 });
   const [status, setStatus] = useState("Loading the room and your Friend…"), [failed, setFailed] = useState(false), [attempt, setAttempt] = useState(0);
   const [family, setFamily] = useState("");
-  const live = useRef({ deal, revealed, reducedMotion, potLabel, prizeLabel, family });
-  live.current = { deal, revealed, reducedMotion, potLabel, prizeLabel, family };
+  const live = useRef({ deal, revealed, reducedMotion, potLabel, feeLabel, family });
+  live.current = { deal, revealed, reducedMotion, potLabel, feeLabel, family };
   const anim = useRef<{ deal: Deal | null; opened: Map<string, number>; last: number; finishedAt: number }>({ deal: null, opened: new Map(), last: 0, finishedAt: 0 });
 
   useEffect(() => {
@@ -191,7 +191,7 @@ export function RoomScene({ friendId, deal, revealed, reducedMotion, potLabel, p
           if (finished && moving && won && since < 2200) { walking = true; lift = Math.round(Math.abs(Math.sin(since / 140)) * 14); step = Math.floor(now / 110) % 8; }
           else if (finished && moving && !won && since < 1400) { facing = since < 400 ? "left" : since < 800 ? "right" : "down"; }
           drawFriend(ctx, sprites, facing, walking, step, fx, fy - lift);
-          drawTable(ctx, state.potLabel, state.prizeLabel);
+          drawTable(ctx, state.potLabel, state.feeLabel);
           NEAR_BOTS.forEach(([px, py], slot) => drawBot(ctx, px, py, hop(FAR_BOTS.length + slot), botWinner(FAR_BOTS.length + slot)));
           // Plates and names sit on top of everything.
           const label = (index: number) => state.deal && botOpen(index) ? String(state.deal.bots[index].number) : "?";

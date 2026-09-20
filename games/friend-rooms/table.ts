@@ -60,16 +60,28 @@ export function describeResult(deal: Deal): string {
     : `Your ${deal.friendNumber} — ${deal.gap} short of ${deal.highest}`;
 }
 
-export type Economy = Readonly<{ pot: bigint; prize: bigint; burn: bigint; burnShare: bigint }>;
+export type Economy = Readonly<{
+  /** What one ticket adds to the pot. */
+  entry: bigint;
+  /** The table fee taken from each ticket at entry; burned in the model. */
+  fee: bigint;
+  /** The pot: every seat's entry. The highest number takes all of it. */
+  pot: bigint;
+  /** The fees of the whole table, simulated bots included. */
+  tableFees: bigint;
+}>;
 /**
- * The table's money, derived from the game definition: SEATS tickets go in, the winner takes the prize and the
- * rest is burned in the model. Returns null when the definition is not a 10%-burn table, so nothing untrue is shown.
+ * The table's money, derived from the game definition. Each ticket is split at entry into a share for the pot and a table
+ * fee, so SEATS tickets fill a pot that equals the top prize and the fees pay for the table. Returns null when the
+ * definition is not a table with a 10% fee, so nothing untrue is shown.
  */
 export function tableEconomy(price: bigint, prize: bigint): Economy | null {
-  const pot = price * BigInt(SEATS);
-  if (prize <= 0n || prize * 10n !== pot * 9n) return null;
-  const burn = pot - prize;
-  return Object.freeze({ pot, prize, burn, burnShare: burn / BigInt(SEATS) });
+  const paidIn = price * BigInt(SEATS);
+  if (prize <= 0n || prize * 10n !== paidIn * 9n) return null;
+  const tableFees = paidIn - prize;
+  if (tableFees % BigInt(SEATS) !== 0n) return null;
+  const fee = tableFees / BigInt(SEATS);
+  return Object.freeze({ entry: price - fee, fee, pot: prize, tableFees });
 }
 
 export type Career = Readonly<{ played: number; wins: number; bestNumber: number; streak: number; bestStreak: number }>;
