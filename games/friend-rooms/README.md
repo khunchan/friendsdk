@@ -270,6 +270,8 @@ Run on 2026-09-20 with SDK v0.1.2 and Node.js 22, from the SDK root:
 
 The browser check needs `npx playwright install chromium` once.
 
+Manual check on the live preview with a real wallet, in a desktop browser and in a mobile wallet browser (Rabby): wallet on another network (Base) → Switch to Robinhood → pick a Friend → play. On the phone the top bar stays on one line and the whole table and buttons are visible.
+
 ## Known limits
 
 - The SDK preview wallet is fixed at 20 RF, so tickets cost 1 RF (Room 100 RF at 1/100 scale) and one run is limited to 11 games by the prize backing.
