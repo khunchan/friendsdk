@@ -278,4 +278,4 @@ Manual check on the live preview with a real wallet, in a desktop browser and in
 - Bots, the shared table and the table fee burn are simulated; SDK v0.1.3 has no shared rooms and does not burn RF.
 - Progress resets when the preview session ends.
 - On a 360 px wide screen the SDK container is only 360 x 240, so the table is small.
-- Automated checks use a mocked wallet and a sample Friend. The builder played more than 40 games by hand with a real wallet and two Friends: Generation 2 (Cellular) and Generation 4 (Skeleton), on the v0.1.0 build, and has since played the rebuilt v0.1.2 preview by hand with a real wallet too.
+- Automated checks use a mocked wallet and a sample Friend. The builder played more than 40 games by hand with a real wallet and two Friends: Generation 2 (Cellular) and Generation 4 (Skeleton), on the v0.1.0 build, and has since played the rebuilt v0.1.2 and v0.1.3 previews by hand with a real wallet too, confirming v0.1.3's Friend-discovery fix on a real wallet.
