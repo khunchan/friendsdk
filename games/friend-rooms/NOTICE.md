@@ -1,7 +1,7 @@
 # Notices
 
-Friend Rooms is built with FriendSDK from Rare Friends. The SDK source is licensed under Apache-2.0 ([LICENSE](https://github.com/spokesz/friendsdk/blob/v0.1.2/LICENSE)), and
-the SDK's [NOTICE](https://github.com/spokesz/friendsdk/blob/v0.1.2/NOTICE.md) allows using and modifying its artwork in public playable previews and finished projects. This
+Friend Rooms is built with FriendSDK from Rare Friends. The SDK source is licensed under Apache-2.0 ([LICENSE](https://github.com/spokesz/friendsdk/blob/v0.1.3/LICENSE)), and
+the SDK's [NOTICE](https://github.com/spokesz/friendsdk/blob/v0.1.3/NOTICE.md) allows using and modifying its artwork in public playable previews and finished projects. This
 folder is submitted to the Rare Friends Vibeathon, and the team welcomed the [playable preview](https://khunchan.github.io/friendsdk/),
 a static build of this game with the SDK runtime.
 
