@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.3
+
+- Fixed owned Friend discovery on the default Robinhood RPC by starting at the
+  canonical collection's first `Transfer` block and paging history reads within
+  the provider's ten-million-block limit.
+- Kept discovery account-filtered and verified against current balances,
+  ownership, generation and canonical Friend wallets without scanning token IDs.
+
 ## 0.1.2
 
 - Welcomed durable items, cosmetics, perks, upgrades and additional currencies
