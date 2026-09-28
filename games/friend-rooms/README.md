@@ -9,7 +9,7 @@ Nothing is sent on-chain. An owned Generations NFT is still required; the SDK ru
 
 **Risks for wallets and funds:** none known. Connecting a wallet only reads which Friends you own; the game never asks for a signature, a key or a transaction, and no funds are involved.
 
-**Playable preview:** https://khunchan.github.io/friendsdk/ (a static build from commit `661f908`). You need a browser wallet holding a hardwired Rare Friends
+**Playable preview:** https://khunchan.github.io/friendsdk/ (a static build from commit `7abfa0b`). You need a browser wallet holding a hardwired Rare Friends
 Generations NFT (generation 1 or higher) on Robinhood mainnet; the SDK verifies ownership before play. Everything is
 simulated, so no RF, private key or transaction signature is needed. The SDK panel says "Local preview": that is the SDK's
 label for its simulated mode. The Rare Friends team [welcomed this hosted preview](https://github.com/spokesz/rarefriends-vibeathon/pull/7#issuecomment-5748019728).
