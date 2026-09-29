@@ -7,7 +7,7 @@ unique number from 1 to 100 and the highest number wins.
 **Everything is simulated.** Prices, balances and prizes use the SDK preview ledger; the table fee and its burn are a labeled model.
 Nothing is sent on-chain. An owned Generations NFT is still required; the SDK runtime checks it.
 
-**Risks for wallets and funds:** none known. Connecting a wallet only reads which Friends you own; the game never asks for a signature, a key or a transaction, and no funds are involved.
+**Risks for wallets and funds:** none known. Connecting a wallet only reads which Friends you own; the game never asks for a signature, a key or a transaction, and no funds are involved. SDK v0.1.4 also excludes unused live-transaction code from preview builds like this one, removing a wallet warning some browser wallets showed on earlier preview builds even though no transaction was ever requested.
 
 **Playable preview:** https://khunchan.github.io/friendsdk/ (a static build from commit `b9b0358`). You need a browser wallet holding a hardwired Rare Friends
 Generations NFT (generation 1 or higher) on Robinhood mainnet; the SDK verifies ownership before play. Everything is
