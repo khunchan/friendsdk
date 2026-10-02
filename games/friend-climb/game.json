@@ -1,0 +1,8 @@
+{
+  "name": "Friend Climb",
+  "consumable": "Unused placeholder token",
+  "price": "1000000000000000000",
+  "outcomes": [
+    { "name": "Unused placeholder reward", "chanceBps": 10000, "reward": "1000000000000000000" }
+  ]
+}

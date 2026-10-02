@@ -1,0 +1,30 @@
+.fc-game{position:relative;width:100%;height:100%;overflow:hidden;color:#000;background:#fff;font:14px/1.4 monospace}
+.fc-top{position:absolute;inset:14px 16px auto;z-index:2;display:flex;align-items:center;gap:8px;pointer-events:none}
+.fc-top span{margin-right:auto;background:#fff;padding:8px;border:1px solid #000}
+.fc-top button{pointer-events:auto}
+.fc-game button,.fc-loading button{font:inherit;cursor:pointer;padding:9px 13px;border:2px solid #000;background:#fff;color:#000}
+.fc-game button:disabled{cursor:default;opacity:.5}
+.fc-game button[aria-pressed="true"]{background:#000;color:#fff}
+.fc-scene{position:absolute;inset:0;display:flex;justify-content:center;align-items:center;background:#fff}
+.fc-scene canvas{display:block;max-width:100%;max-height:100%;image-rendering:pixelated}
+.fc-hint{position:absolute;bottom:14px;left:16px;right:16px;margin:0;text-align:center;font-size:11px;pointer-events:none}
+/* justify-content:flex-start (not center) plus generous bottom padding, so tall content never lands under
+   the SDK's toolbar, which always overlays the bottom-left and bottom-right corners of the frame. */
+.fc-status,.fc-pick,.fc-result{position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:flex-start;background:#fff;text-align:center;padding:24px 24px 90px;overflow:auto}
+.fc-status{justify-content:center}
+.fc-status p{margin:0}
+.fc-pick h1,.fc-result h1{margin:0;font-size:22px}
+.fc-pick p,.fc-result p{max-width:320px;margin:0}
+.fc-note{font-size:11px;opacity:.8}
+.fc-import{display:flex;flex-direction:column;gap:6px;width:min(320px,100%)}
+.fc-import input{font:inherit;padding:8px;border:2px solid #000;background:#fff;color:#000;width:100%;box-sizing:border-box}
+@media(max-width:520px){
+  .fc-top{inset:6px 6px auto;gap:4px;font-size:9px}
+  .fc-top button{padding:4px 6px;min-height:0;white-space:nowrap}
+  .fc-top span{padding:4px 6px;white-space:nowrap}
+  .fc-hint{bottom:8px;font-size:10px}
+  .fc-desktop-controls{display:none}
+  .fc-pick,.fc-result{padding:14px 14px 80px;gap:10px}
+  .fc-status{padding:14px;gap:10px}
+  .fc-pick h1,.fc-result h1{font-size:18px}
+}

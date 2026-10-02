@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "rootDir": ".", "noEmit": true, "module": "ESNext", "moduleResolution": "Bundler" },
+  "include": ["games/**/*.ts", "games/**/*.tsx", "games/styles.d.ts"]
+}

@@ -1,0 +1,6 @@
+/* A climbing tower is a portrait game; the SDK frame defaults to a 3 / 2 landscape box. Loaded by the
+   trusted CLI runtime only (see HOST_INTEGRATION.md) — child styles in index.tsx cannot resize the host. */
+:root {
+  --rf-game-max-width: 480px;
+  --rf-game-aspect-ratio: 3 / 4;
+}
