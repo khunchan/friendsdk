@@ -52,7 +52,14 @@ function spawnBurst(particles: Particle[], x: number, y: number, color: string, 
   }
 }
 
-type Run = { tower: Tower; state: RunState; transitions: Transition[]; lastDir: Dir; bot: Ghost; own: Ghost[]; imported: Ghost | null };
+type Run = {
+  tower: Tower; state: RunState; transitions: Transition[]; lastDir: Dir; bot: Ghost; own: Ghost[]; imported: Ghost | null;
+  // Per-run camera/particle state. These used to live outside the Run object and never reset between games,
+  // so a second run started after climbing high in the first one rendered the Friend far below the visible
+  // canvas — invisible, camera stuck at the previous run's height. Keeping them here fixes that at the root:
+  // a fresh Run means a fresh camera, exactly like a fresh tower and a fresh score.
+  cameraHeight: number; particles: Particle[];
+};
 
 export default function FriendClimb({ friendId, client, paused }: GameComponentProps) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -86,7 +93,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     const own = sameTower.slice(0, 3).map((run, index) => makeGhost(`run ${index + 1}`, "#8a8a8a", tower, run.transitions));
     const bot = makeGhost("bot", "#444", tower, botRun(nextSeed).transitions);
     const imported = importedGhost && importedGhost.seed === nextSeed ? makeGhost("friend's code", "#1b7a3d", tower, importedGhost.transitions) : null;
-    runRef.current = { tower, state: startRun(), transitions: [], lastDir: 0, bot, own, imported };
+    runRef.current = { tower, state: startRun(), transitions: [], lastDir: 0, bot, own, imported, cameraHeight: 0, particles: [] };
     setSeed(nextSeed); setImportError(""); setScreen("play");
   }
   function endGame(score: number) {
@@ -101,8 +108,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
   useEffect(() => {
     const node = canvas.current, ctx = node?.getContext("2d");
     if (!node || !ctx) { setFailed(true); setStatus("This browser cannot render the tower."); return; }
-    let cancelled = false, frame = 0, previousTime = 0, accumulator = 0, cameraHeight = 0;
-    const particles: Particle[] = [];
+    let cancelled = false, frame = 0, previousTime = 0, accumulator = 0;
     setFailed(false); setStatus("Loading your Friend…");
     // The initial client.read() has no economy use here, but it is what tells the trusted runtime the
     // session is ready (see examples/scrolling-world, which does the same for a free exploration game).
@@ -115,8 +121,8 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
         const dt = previousTime ? Math.min((now - previousTime) / 1000, 0.05) : 0; previousTime = now;
         const run = runRef.current, active = !live.current.paused && live.current.menu === null && live.current.screen === "play" && !document.hidden;
         if (run && active && run.state.alive) {
-          const pressed = (heldPointer.current ?? ((heldKeys.current.has("arrowright") || heldKeys.current.has("d") ? 1 : 0)
-            - (heldKeys.current.has("arrowleft") || heldKeys.current.has("a") ? 1 : 0))) as Dir;
+          const pressed = (heldPointer.current ?? ((heldKeys.current.has("ArrowRight") || heldKeys.current.has("KeyD") ? 1 : 0)
+            - (heldKeys.current.has("ArrowLeft") || heldKeys.current.has("KeyA") ? 1 : 0))) as Dir;
           dirRef.current = pressed;
           accumulator += dt;
           while (accumulator >= DT && run.state.alive) {
@@ -128,22 +134,34 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             if (run.imported) run.imported = advanceGhost(run.imported);
             if (wasFalling && run.state.vy > 0) {
               sound.current?.play("impact");
-              if (!live.current.reducedMotion) spawnBurst(particles, run.state.x, run.state.height, color, 7);
+              if (!live.current.reducedMotion) spawnBurst(run.particles, run.state.x, run.state.height, color, 7);
             }
             if (run.state.stars > previousStars) {
               sound.current?.play("reward");
-              if (!live.current.reducedMotion) spawnBurst(particles, run.state.x, run.state.height + 10, "#ccff00", 10);
+              if (!live.current.reducedMotion) spawnBurst(run.particles, run.state.x, run.state.height + 10, "#ccff00", 10);
             }
             if (!run.state.alive) sound.current?.play("impact", { volume: 0.7 });
           }
           if (!run.state.alive) endGame(scoreOf(run.state));
         }
-        if (run) cameraHeight = Math.max(cameraHeight, run.state.height - CAMERA_ANCHOR);
-        const toScreenY = (height: number) => CAMERA_ANCHOR - (height - cameraHeight);
+        if (run) run.cameraHeight = Math.max(run.cameraHeight, run.state.height - CAMERA_ANCHOR);
+        const toScreenY = (height: number) => CAMERA_ANCHOR - (height - (run?.cameraHeight ?? 0));
 
         ctx.clearRect(0, 0, VIEW.width, VIEW.height);
         ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, VIEW.width, VIEW.height);
         ctx.strokeStyle = "#000"; ctx.lineWidth = 2; ctx.strokeRect(LANE_MARGIN, 0, WORLD_WIDTH, VIEW.height);
+        // The lane wraps left-right (see tower.ts); these chevrons mark both edges as a portal, not a wall,
+        // at a few fixed screen heights so at least one pair stays visible regardless of how far the camera
+        // has scrolled. wrappedScreenXs() is what actually draws the Friend/ghosts again on the far side.
+        ctx.fillStyle = "#ccff00"; ctx.strokeStyle = "#000"; ctx.lineWidth = 1;
+        for (const chevronY of [VIEW.height * 0.22, VIEW.height * 0.5, VIEW.height * 0.78]) {
+          for (const side of [-1, 1] as const) {
+            const edgeX = side === -1 ? LANE_MARGIN : LANE_MARGIN + WORLD_WIDTH;
+            ctx.beginPath();
+            ctx.moveTo(edgeX - side * 9, chevronY - 7); ctx.lineTo(edgeX + side * 2, chevronY); ctx.lineTo(edgeX - side * 9, chevronY + 7);
+            ctx.closePath(); ctx.fill(); ctx.stroke();
+          }
+        }
         if (run) {
           run.tower.platforms.forEach((platform, index) => {
             if (run.state.broken.has(index)) return;
@@ -168,10 +186,10 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             }
           }
           if (!live.current.reducedMotion) {
-            for (let index = particles.length - 1; index >= 0; index--) {
-              const particle = particles[index]; particle.life -= dt; particle.vy -= 500 * dt;
+            for (let index = run.particles.length - 1; index >= 0; index--) {
+              const particle = run.particles[index]; particle.life -= dt; particle.vy -= 500 * dt;
               particle.x += particle.vx * dt; particle.y += particle.vy * dt;
-              if (particle.life <= 0) { particles.splice(index, 1); continue; }
+              if (particle.life <= 0) { run.particles.splice(index, 1); continue; }
               ctx.globalAlpha = Math.max(0, particle.life / 0.4); ctx.fillStyle = particle.color;
               ctx.fillRect(LANE_MARGIN + particle.x - 2, toScreenY(particle.y) - 2, 4, 4);
             }
@@ -189,9 +207,13 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             ctx.restore();
           }
         }
+        node.dataset.x = run ? run.state.x.toFixed(1) : "";
         node.dataset.height = run ? run.state.height.toFixed(1) : "0";
         node.dataset.score = run ? String(scoreOf(run.state)) : "0";
         node.dataset.screen = live.current.screen;
+        // Lets check-browser.mjs catch "the camera lost the Friend" without reading pixels: the Friend must
+        // always be within the visible canvas while a run is alive, never scrolled off by a stale camera.
+        node.dataset.playerScreenY = run ? toScreenY(run.state.height).toFixed(1) : "";
         frame = requestAnimationFrame(render);
       };
       frame = requestAnimationFrame(render);
@@ -232,9 +254,11 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
       <canvas ref={canvas} width={VIEW.width} height={VIEW.height} tabIndex={sceneBlocked ? -1 : 0}
         aria-label="Climbing tower. Arrow keys or A/D to steer, or hold either side of the tower to steer there."
         onBlur={stop}
-        onKeyDown={event => { if (sceneBlocked) return; const key = event.key.toLowerCase();
-          if (["arrowleft", "arrowright", "a", "d"].includes(key)) { event.preventDefault(); heldKeys.current.add(key); } }}
-        onKeyUp={event => heldKeys.current.delete(event.key.toLowerCase())}
+        // event.code names the physical key, not the character it types, so steering works on any keyboard
+        // layout — on a Cyrillic layout, for instance, the "A"/"D" keys still report "KeyA"/"KeyD".
+        onKeyDown={event => { if (sceneBlocked) return;
+          if (["ArrowLeft", "ArrowRight", "KeyA", "KeyD"].includes(event.code)) { event.preventDefault(); heldKeys.current.add(event.code); } }}
+        onKeyUp={event => heldKeys.current.delete(event.code)}
         onPointerDown={event => { if (sceneBlocked) return; event.preventDefault(); event.currentTarget.focus();
           const rect = event.currentTarget.getBoundingClientRect();
           heldPointer.current = (event.clientX - rect.left) / rect.width < 0.5 ? -1 : 1; }}

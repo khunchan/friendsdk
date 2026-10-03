@@ -86,8 +86,24 @@ try {
     const copied = await page.evaluate(() => navigator.clipboard.readText().catch(() => null));
     if (copied !== code) await child.getByText('select the code above', { exact: false }).waitFor();
 
+    // A second run must start with the Friend visible again, not scrolled off by a stale camera left over
+    // from how high the first run climbed (the bug the builder found and fixed after playtesting).
     await child.getByRole('button', { name: 'Play this tower again' }).click();
     await child.getByText('Height 0', { exact: true }).waitFor();
+    await page.waitForTimeout(150);
+    const playerY = Number(await canvas.getAttribute('data-player-screen-y'));
+    assert(playerY >= 0 && playerY <= 640, `The Friend must render inside the canvas on a second run (got screen y ${playerY})`);
+
+    // event.code (the physical key), not event.key (the typed character), must drive steering — this is
+    // what makes arrow keys and A/D work on a Cyrillic or other non-Latin keyboard layout too.
+    await canvas.focus();
+    const beforeX = Number(await canvas.getAttribute('data-x'));
+    await canvas.evaluate(el => el.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyD', key: 'в', bubbles: true })));
+    await page.waitForTimeout(400);
+    await canvas.evaluate(el => el.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyD', key: 'в', bubbles: true })));
+    const afterX = Number(await canvas.getAttribute('data-x'));
+    assert.notEqual(beforeX, afterX, 'A Cyrillic-layout "D" key (code KeyD, key "в") must still steer');
+
     await child.getByRole('button', { name: 'Settings' }).click();
     await child.getByRole('dialog').getByRole('checkbox', { name: 'Reduce motion' }).click();
     await child.getByRole('dialog').getByRole('button', { name: 'Back', exact: true }).click();
