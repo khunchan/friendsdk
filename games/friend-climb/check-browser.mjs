@@ -6,9 +6,15 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { decodeFunctionData, encodeFunctionResult } from 'viem';
+import { build as esbuild } from 'esbuild';
 import { FAMILIES_REGISTRY_ABI } from '../../dist/generation-sprites.js';
 import { buildGame, createGameServer } from '../../scripts/dev-game.mjs';
 import { installFixture, assertBounds } from '../../scripts/check-runtime-browser.mjs';
+
+// The same bundle-to-data-URL trick tower.test.mjs uses, so this check can read the exact bot moves the game
+// itself would compute for the fixture's pinned Practice seed (1500) and drive the real UI through them.
+const towerBundle = await esbuild({ entryPoints: [new URL('./tower.ts', import.meta.url).pathname], bundle: true, format: 'esm', write: false });
+const tower = await import(`data:text/javascript;base64,${Buffer.from(towerBundle.outputFiles[0].text).toString('base64')}`);
 
 const source = await readFile(new URL('../../examples/fishing/sample-sprites.ts', import.meta.url), 'utf8');
 const section = source.split('"7730": decodeGenerationSprites')[1].split(']),')[0];
@@ -22,6 +28,38 @@ function artworkCall(call) {
   else if (functionName === 'frames') { assert.deepEqual(args, [5, 7730]); result = frames; }
   else throw new Error(`Unexpected artwork read ${functionName}`);
   return encodeFunctionResult({ abi: FAMILIES_REGISTRY_ABI, functionName, result });
+}
+
+/**
+ * Drives the real UI through a recorded transitions track in real time via genuine keyboard events (not a
+ * shortcut into React state), while sampling the camera and the HUD every half second. This is what actually
+ * proves the camera fix: a single sample right after a run starts (height 0) cannot catch a camera that only
+ * breaks once the Friend has climbed for a while, which is exactly how the bug first got past this check.
+ */
+async function driveAndWatchCamera(page, canvas, transitions, seconds) {
+  const samples = [];
+  const codeFor = dir => (dir === -1 ? 'ArrowLeft' : dir === 1 ? 'ArrowRight' : null);
+  const started = Date.now();
+  let dir = 0, index = 0;
+  const sample = async () => {
+    const y = Number(await canvas.getAttribute('data-player-screen-y'));
+    const height = Number(await canvas.getAttribute('data-height'));
+    const hud = await page.frameLocator('iframe').locator('.fc-top span').first().textContent();
+    samples.push({ t: Date.now() - started, y, height, hud });
+  };
+  while (Date.now() - started < seconds * 1000) {
+    const elapsedTicks = (Date.now() - started) / 1000 * 60;
+    while (index < transitions.length && transitions[index].tick <= elapsedTicks) {
+      const next = transitions[index].dir; index++;
+      if (codeFor(dir)) await page.keyboard.up(codeFor(dir));
+      if (codeFor(next)) await page.keyboard.down(codeFor(next));
+      dir = next;
+    }
+    await sample();
+    await page.waitForTimeout(500);
+  }
+  if (codeFor(dir)) await page.keyboard.up(codeFor(dir));
+  return samples;
 }
 
 /** No `.rf-frame-menu`/world-prompt scaffolding in this game, but still nothing may escape the frame. */
@@ -93,6 +131,24 @@ try {
     await page.waitForTimeout(150);
     const playerY = Number(await canvas.getAttribute('data-player-screen-y'));
     assert(playerY >= 0 && playerY <= 640, `The Friend must render inside the canvas on a second run (got screen y ${playerY})`);
+
+    if (width === 1100) {
+      // The deep camera/HUD check: drive the fixture's pinned Practice seed (1500) through the real UI with
+      // the exact bot moves tower.ts would compute for it, for 22 real seconds, sampling twice a second.
+      const botMoves = tower.botRun(1500, 60 * 180).transitions;
+      const samples = await driveAndWatchCamera(page, canvas, botMoves, 22);
+      assert(samples.length >= 40, `expected roughly 44 half-second samples over 22s, got ${samples.length}`);
+      for (const s of samples) {
+        assert(s.y >= 640 * 0.15 && s.y <= 640 * 0.75,
+          `at t=${s.t}ms the Friend's screen y (${s.y.toFixed(1)}) left the 15%-75% band — the camera lost it`);
+        // A brief dip just below the spawn height is normal play, not a bug, so a leading "-" is allowed.
+        assert.match(s.hud, /^Height -?\d+$/, `at t=${s.t}ms the HUD did not read "Height N" (got "${s.hud}")`);
+      }
+      const heights = samples.map(s => Number(s.hud.replace('Height ', '')));
+      assert(heights.some((h, i) => i > 0 && h > heights[i - 1]), 'the HUD height must visibly change between samples, not sit frozen at "Height 0"');
+      assert(heights[heights.length - 1] > heights[0], `the HUD height must grow over the climb (${heights[0]} → ${heights[heights.length - 1]})`);
+      assert(samples[samples.length - 1].height > 50, `expected real height after 22s of bot-driven climbing, got ${samples[samples.length - 1].height}`);
+    }
 
     // event.code (the physical key), not event.key (the typed character), must drive steering — this is
     // what makes arrow keys and A/D work on a Cyrillic or other non-Latin keyboard layout too.

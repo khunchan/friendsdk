@@ -15,7 +15,17 @@ import {
 
 const VIEW = { width: 360, height: 640 };
 const LANE_MARGIN = (VIEW.width - WORLD_WIDTH) / 2; // 30px either side of the 300-wide lane
-const CAMERA_ANCHOR = VIEW.height * 0.62; // how far down the screen the Friend sits while climbing
+// Between two platforms the Friend's real height naturally dips below the last peak by as much as FALL_MARGIN
+// (losing more than that ends the run) before the next bounce resets it — so the anchor needs that much room
+// below it on screen, not just room above it for the camera's climb lag, or an ordinary mid-run dip pushes the
+// Friend toward the bottom edge even though nothing is wrong.
+const CAMERA_ANCHOR = VIEW.height * 0.34;
+/** How quickly the camera's world-height reference catches up to the Friend's highest point. Exponential
+ * smoothing: with a constant climb speed v, the camera settles to a steady lag of v / CAMERA_CATCH_UP_RATE
+ * world units behind the peak. The fastest sustained climb measured in tower.test.mjs's bot runs is well
+ * under 400 units/s, so this keeps the lag under roughly 100px — nowhere near falling off the top of a
+ * 640px-tall view. See the render loop for the one line that actually applies it. */
+const CAMERA_CATCH_UP_RATE = 4;
 /** The whole scene stays inside this three-color palette: black, white and Rare Friends' signal green. */
 const NEON = "#ccff00";
 const todaySeed = () => seedForDate(new Date().toISOString().slice(0, 10));
@@ -131,6 +141,11 @@ type Run = {
 
 export default function FriendClimb({ friendId, client, paused }: GameComponentProps) {
   const canvas = useRef<HTMLCanvasElement>(null);
+  // The height readout changes every physics tick; writing it to this DOM node directly from the render loop
+  // (throttled below) keeps it live without asking React to re-render the whole component ~60 times a second.
+  // A prior version read runRef.current.state.height only inside the JSX, which only re-evaluates on a React
+  // re-render — none of which the render loop triggers — so the HUD showed "Height 0" for the whole run.
+  const heightLabel = useRef<HTMLSpanElement>(null);
   const [status, setStatus] = useState("Loading your Friend…"), [failed, setFailed] = useState(false), [revision, setRevision] = useState(0);
   const [screen, setScreen] = useState<Screen>("pick");
   const [seed, setSeed] = useState<number>(() => todaySeed());
@@ -178,7 +193,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
   useEffect(() => {
     const node = canvas.current, ctx = node?.getContext("2d");
     if (!node || !ctx) { setFailed(true); setStatus("This browser cannot render the tower."); return; }
-    let cancelled = false, frame = 0, previousTime = 0, accumulator = 0;
+    let cancelled = false, frame = 0, previousTime = 0, accumulator = 0, lastHudUpdate = 0;
     setFailed(false); setStatus("Loading your Friend…");
     // Built once per mount, reused by drawImage every frame after — see the "Arcade Neon rendering" helpers.
     const glowDot = buildGlowDot(16), hazardPattern = buildHazardPattern(ctx);
@@ -216,7 +231,16 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
           }
           if (!run.state.alive) endGame(scoreOf(run.state));
         }
-        if (run) run.cameraHeight = Math.max(run.cameraHeight, run.state.height - CAMERA_ANCHOR);
+        if (run) {
+          // The bug this replaces: cameraHeight snapped straight to (height - CAMERA_ANCHOR) every frame while
+          // climbing, which substituted into toScreenY below to exactly 0 — the Friend was pinned to the very
+          // top pixel of the canvas on every new peak, not held at the anchor. Easing toward run.state.peakHeight
+          // itself (tower.ts's own monotonic high-water mark, already proven never to decrease) fixes both: the
+          // Friend now settles AT the anchor with a smooth lag instead of snapping past it, and because the
+          // target never decreases, neither does cameraHeight — falling never pulls the camera back down.
+          const catchUp = 1 - Math.exp(-CAMERA_CATCH_UP_RATE * dt);
+          run.cameraHeight += (run.state.peakHeight - run.cameraHeight) * catchUp;
+        }
         const toScreenY = (height: number) => CAMERA_ANCHOR - (height - (run?.cameraHeight ?? 0));
 
         const motion = !live.current.reducedMotion;
@@ -306,6 +330,12 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             ctx.restore();
           }
         }
+        // ~10 updates/second is plenty for a number that only needs to look alive, and far cheaper than a
+        // React re-render on every one of these (up to 60/second).
+        if (heightLabel.current && now - lastHudUpdate > 100) {
+          lastHudUpdate = now;
+          heightLabel.current.textContent = `Height ${run ? Math.floor(run.state.height / 10) : 0}`;
+        }
         node.dataset.x = run ? run.state.x.toFixed(1) : "";
         node.dataset.height = run ? run.state.height.toFixed(1) : "0";
         node.dataset.score = run ? String(scoreOf(run.state)) : "0";
@@ -342,7 +372,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
   const sceneBlocked = paused || menu !== null || screen !== "play" || Boolean(status);
   return <section className="fc-game" aria-label="Friend Climb">
     <div className="fc-top" inert={paused || undefined}>
-      <span>{screen === "play" && runRef.current ? `Height ${Math.floor(runRef.current.state.height / 10)}` : "Friend Climb"}</span>
+      {screen === "play" ? <span ref={heightLabel}>Height 0</span> : <span>Friend Climb</span>}
       <button type="button" aria-pressed={!muted} disabled={Boolean(status)} onClick={() => {
         const next = !muted; setMuted(next); sound.current?.setMuted(next); if (!next) void sound.current?.unlock();
       }}>{muted ? "Sound off" : "Sound on"}</button>
