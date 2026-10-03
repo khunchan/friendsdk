@@ -16,11 +16,8 @@ import {
 const VIEW = { width: 360, height: 640 };
 const LANE_MARGIN = (VIEW.width - WORLD_WIDTH) / 2; // 30px either side of the 300-wide lane
 const CAMERA_ANCHOR = VIEW.height * 0.62; // how far down the screen the Friend sits while climbing
-/** One accent color per family, used only for this game's own particle and ghost-marker effects. */
-const FAMILY_COLORS: Record<string, string> = {
-  Skeleton: "#9bd1ff", Mask: "#ffb3e6", Family: "#ffd36e", Cellular: "#8effa0",
-  Asymmetry: "#ff8e6e", Hoverer: "#b7a6ff", Colossus: "#ffe36e", Sparkling: "#ccff00", Hollow: "#c9c9c9",
-};
+/** The whole scene stays inside this three-color palette: black, white and Rare Friends' signal green. */
+const NEON = "#ccff00";
 const todaySeed = () => seedForDate(new Date().toISOString().slice(0, 10));
 const randomSeed = () => { const words = new Uint32Array(1); crypto.getRandomValues(words); return words[0]; };
 
@@ -51,6 +48,77 @@ function spawnBurst(particles: Particle[], x: number, y: number, color: string, 
     particles.push({ x, y, vx: Math.cos(angle) * 90 * (Math.random() - 0.5) * 2, vy: Math.sin(angle) * 90, life: 0.4, color });
   }
 }
+
+// --- Arcade Neon rendering: everything below builds small offscreen bitmaps ONCE (sprite outline, glow dot,
+// hazard pattern) instead of recomputing a soft-edge "glow" every frame with ctx.shadowBlur, which is one of
+// the more expensive canvas operations on a phone GPU. The render loop only ever calls drawImage/fillStyle
+// with these, which is cheap at any screen size. None of this reads or changes tower.ts's simulation state.
+
+/** A soft green dot, stamped (never shadowBlur'd) wherever a glow is needed: particles, stars, outlines. */
+function buildGlowDot(radius: number, rgb = "204,255,0"): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = radius * 2;
+  const ctx = canvas.getContext("2d")!;
+  const gradient = ctx.createRadialGradient(radius, radius, 0, radius, radius, radius);
+  gradient.addColorStop(0, `rgba(${rgb},0.9)`); gradient.addColorStop(0.5, `rgba(${rgb},0.35)`); gradient.addColorStop(1, `rgba(${rgb},0)`);
+  ctx.fillStyle = gradient; ctx.beginPath(); ctx.arc(radius, radius, radius, 0, Math.PI * 2); ctx.fill();
+  return canvas;
+}
+
+/** How far buildPlayerSprite's glow halo extends past the canonical 16x16 mask; used again where the sprite
+ * is drawn, to line the mask itself back up with where the old unpadded sprite used to sit on screen. */
+const PLAYER_SPRITE_PAD = 14;
+/** The canonical 16x16 mask, composited once into a neon sprite: a soft green halo, a crisp green outline
+ * ring, and a pale fill on top — the same "halo then fill" trick the other games use, just recolored for a
+ * dark scene and baked into a bitmap instead of redrawn pixel by pixel every frame. */
+function buildPlayerSprite(rows: readonly string[]): HTMLCanvasElement {
+  const CELL = 5, PAD = PLAYER_SPRITE_PAD, canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 16 * CELL + PAD * 2;
+  const ctx = canvas.getContext("2d")!, off = PAD;
+  const cells: [number, number][] = [];
+  rows.forEach((row, py) => [...row].forEach((pixel, px) => { if (pixel === "#") cells.push([px, py]); }));
+  for (const [grow, alpha] of [[4, 0.12], [2.5, 0.22], [1, 0.4]] as const) {
+    ctx.fillStyle = `rgba(204,255,0,${alpha})`;
+    for (const [px, py] of cells) ctx.fillRect(off + px * CELL - grow, off + py * CELL - grow, CELL + grow * 2, CELL + grow * 2);
+  }
+  ctx.fillStyle = "#ccff00";
+  for (const [px, py] of cells) ctx.fillRect(off + px * CELL - 1, off + py * CELL - 1, CELL + 2, CELL + 2);
+  ctx.fillStyle = "#eafff0";
+  for (const [px, py] of cells) ctx.fillRect(off + px * CELL, off + py * CELL, CELL, CELL);
+  return canvas;
+}
+
+/** Black/green diagonal hazard stripes for a breaking platform — one tiny tile, repeated by the canvas's own
+ * pattern fill, not redrawn by hand every frame. */
+function buildHazardPattern(ctx: CanvasRenderingContext2D): CanvasPattern {
+  const tile = document.createElement("canvas"); tile.width = tile.height = 10;
+  const tctx = tile.getContext("2d")!;
+  tctx.fillStyle = "#000"; tctx.fillRect(0, 0, 10, 10);
+  tctx.strokeStyle = "#ccff00"; tctx.lineWidth = 3;
+  for (const offset of [-5, 5, 15]) { tctx.beginPath(); tctx.moveTo(offset, 10); tctx.lineTo(offset + 10, 0); tctx.stroke(); }
+  return ctx.createPattern(tile, "repeat")!;
+}
+
+/** A deterministic, stable star field: which world-height "bands" carry a star, and where, never changes
+ * from frame to frame (it is not re-randomized on every draw), so stars hold still while the camera scrolls.
+ * Purely decorative — unrelated to tower.ts's seeded generation, so it never affects the physics or score. */
+const STAR_BAND = 70;
+function starsBetween(topHeight: number, bottomHeight: number): { x: number; y: number; size: number }[] {
+  const stars: { x: number; y: number; size: number }[] = [];
+  const first = Math.floor(bottomHeight / STAR_BAND), last = Math.ceil(topHeight / STAR_BAND);
+  for (let band = first; band <= last; band++) {
+    let h = (band * 2654435761) >>> 0; h ^= h >>> 15; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13;
+    const roll = (h >>> 0) / 4294967296;
+    if (roll > 0.55) continue; // most bands are empty; only some carry a star
+    stars.push({ x: ((h >>> 8) % 1000) / 1000 * WORLD_WIDTH, y: band * STAR_BAND + (h % STAR_BAND), size: 1 + (h % 3) * 0.5 });
+  }
+  return stars;
+}
+/** A fixed skyline silhouette near the ground, in world units; it fades out as the camera climbs away. */
+const SKYLINE: readonly [number, number, number][] = [ // [x, width, height]
+  [4, 20, 60], [26, 16, 100], [44, 22, 44], [70, 18, 130], [92, 26, 70], [122, 16, 95],
+  [142, 24, 50], [170, 18, 115], [192, 22, 65], [218, 16, 150], [238, 20, 55], [262, 26, 90],
+];
 
 type Run = {
   tower: Tower; state: RunState; transitions: Transition[]; lastDir: Dir; bot: Ghost; own: Ghost[]; imported: Ghost | null;
@@ -90,9 +158,11 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
   function startGame(nextSeed: number) {
     const tower = generateTower(nextSeed);
     const sameTower = ghosts.filter(run => run.seed === nextSeed);
-    const own = sameTower.slice(0, 3).map((run, index) => makeGhost(`run ${index + 1}`, "#8a8a8a", tower, run.transitions));
-    const bot = makeGhost("bot", "#444", tower, botRun(nextSeed).transitions);
-    const imported = importedGhost && importedGhost.seed === nextSeed ? makeGhost("friend's code", "#1b7a3d", tower, importedGhost.transitions) : null;
+    // Ghost colors stay inside the black/green/white palette — different opacities of white, plus green for
+    // a pasted friend's code — and are told apart by their label, not by introducing another hue.
+    const own = sameTower.slice(0, 3).map((run, index) => makeGhost(`run ${index + 1}`, "rgba(255,255,255,0.3)", tower, run.transitions));
+    const bot = makeGhost("bot", "rgba(255,255,255,0.55)", tower, botRun(nextSeed).transitions);
+    const imported = importedGhost && importedGhost.seed === nextSeed ? makeGhost("friend's code", "rgba(204,255,0,0.6)", tower, importedGhost.transitions) : null;
     runRef.current = { tower, state: startRun(), transitions: [], lastDir: 0, bot, own, imported, cameraHeight: 0, particles: [] };
     setSeed(nextSeed); setImportError(""); setScreen("play");
   }
@@ -110,13 +180,15 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     if (!node || !ctx) { setFailed(true); setStatus("This browser cannot render the tower."); return; }
     let cancelled = false, frame = 0, previousTime = 0, accumulator = 0;
     setFailed(false); setStatus("Loading your Friend…");
+    // Built once per mount, reused by drawImage every frame after — see the "Arcade Neon rendering" helpers.
+    const glowDot = buildGlowDot(16), hazardPattern = buildHazardPattern(ctx);
+    const playerSprites = new Map<string, HTMLCanvasElement>();
     // The initial client.read() has no economy use here, but it is what tells the trusted runtime the
     // session is ready (see examples/scrolling-world, which does the same for a free exploration game).
     void Promise.all([createFriendReader().read(friendId), client.read()]).then(([sprites, snapshot]) => {
       if (cancelled) return;
       if (snapshot.friendId !== friendId) throw new Error("Game session does not match the selected Friend.");
       setStatus("");
-      const color = FAMILY_COLORS[sprites.familyName] ?? "#ccff00";
       const render = (now: number) => {
         const dt = previousTime ? Math.min((now - previousTime) / 1000, 0.05) : 0; previousTime = now;
         const run = runRef.current, active = !live.current.paused && live.current.menu === null && live.current.screen === "play" && !document.hidden;
@@ -134,11 +206,11 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             if (run.imported) run.imported = advanceGhost(run.imported);
             if (wasFalling && run.state.vy > 0) {
               sound.current?.play("impact");
-              if (!live.current.reducedMotion) spawnBurst(run.particles, run.state.x, run.state.height, color, 7);
+              if (!live.current.reducedMotion) spawnBurst(run.particles, run.state.x, run.state.height, NEON, 7);
             }
             if (run.state.stars > previousStars) {
               sound.current?.play("reward");
-              if (!live.current.reducedMotion) spawnBurst(run.particles, run.state.x, run.state.height + 10, "#ccff00", 10);
+              if (!live.current.reducedMotion) spawnBurst(run.particles, run.state.x, run.state.height + 10, NEON, 10);
             }
             if (!run.state.alive) sound.current?.play("impact", { volume: 0.7 });
           }
@@ -147,13 +219,34 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
         if (run) run.cameraHeight = Math.max(run.cameraHeight, run.state.height - CAMERA_ANCHOR);
         const toScreenY = (height: number) => CAMERA_ANCHOR - (height - (run?.cameraHeight ?? 0));
 
+        const motion = !live.current.reducedMotion;
         ctx.clearRect(0, 0, VIEW.width, VIEW.height);
-        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, VIEW.width, VIEW.height);
-        ctx.strokeStyle = "#000"; ctx.lineWidth = 2; ctx.strokeRect(LANE_MARGIN, 0, WORLD_WIDTH, VIEW.height);
+        ctx.fillStyle = "#060606"; ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+
+        if (motion && run) {
+          // Parallax: a stable, deterministic star field (never re-randomized — see starsBetween) plus a
+          // ground skyline that fades out as the camera climbs away from it. Reduced motion skips both: a
+          // still dark lane reads just as clearly and this is the only truly optional layer per frame.
+          const topHeight = run.cameraHeight + VIEW.height - CAMERA_ANCHOR, bottomHeight = run.cameraHeight - CAMERA_ANCHOR;
+          ctx.fillStyle = "#fff";
+          for (const star of starsBetween(topHeight, bottomHeight)) {
+            const y = toScreenY(star.y); ctx.globalAlpha = 0.5; ctx.fillRect(LANE_MARGIN + star.x, y, star.size, star.size);
+          }
+          ctx.globalAlpha = 1;
+          const skylineFade = Math.max(0, 1 - run.cameraHeight / 900);
+          if (skylineFade > 0.02) {
+            ctx.globalAlpha = skylineFade * 0.8; ctx.fillStyle = "#0e140a";
+            for (const [x, width, height] of SKYLINE) ctx.fillRect(LANE_MARGIN + x, toScreenY(height) - 1, width, height);
+            ctx.globalAlpha = 1;
+          }
+        }
+
+        ctx.strokeStyle = "rgba(204,255,0,0.25)"; ctx.lineWidth = 6; ctx.strokeRect(LANE_MARGIN, 0, WORLD_WIDTH, VIEW.height);
+        ctx.strokeStyle = NEON; ctx.lineWidth = 2; ctx.strokeRect(LANE_MARGIN, 0, WORLD_WIDTH, VIEW.height);
         // The lane wraps left-right (see tower.ts); these chevrons mark both edges as a portal, not a wall,
         // at a few fixed screen heights so at least one pair stays visible regardless of how far the camera
         // has scrolled. wrappedScreenXs() is what actually draws the Friend/ghosts again on the far side.
-        ctx.fillStyle = "#ccff00"; ctx.strokeStyle = "#000"; ctx.lineWidth = 1;
+        ctx.fillStyle = NEON; ctx.strokeStyle = "#000"; ctx.lineWidth = 1;
         for (const chevronY of [VIEW.height * 0.22, VIEW.height * 0.5, VIEW.height * 0.78]) {
           for (const side of [-1, 1] as const) {
             const edgeX = side === -1 ? LANE_MARGIN : LANE_MARGIN + WORLD_WIDTH;
@@ -167,11 +260,15 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             if (run.state.broken.has(index)) return;
             const y = toScreenY(platform.height);
             if (y < -20 || y > VIEW.height + 20) return;
-            ctx.fillStyle = platform.breaking ? "#fff" : "#000"; ctx.strokeStyle = "#000"; ctx.lineWidth = 2;
-            ctx.beginPath(); ctx.roundRect(LANE_MARGIN + platform.x - platform.width / 2, y - 6, platform.width, 10, 4);
-            ctx.fill(); ctx.stroke();
+            const left = LANE_MARGIN + platform.x - platform.width / 2;
+            if (platform.breaking) { ctx.fillStyle = hazardPattern; ctx.strokeStyle = NEON; }
+            else { ctx.fillStyle = "#111"; ctx.strokeStyle = motion ? "rgba(204,255,0,0.35)" : NEON; }
+            if (motion && !platform.breaking) { ctx.lineWidth = 5; ctx.beginPath(); ctx.roundRect(left, y - 6, platform.width, 10, 4); ctx.stroke(); }
+            ctx.strokeStyle = NEON; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.roundRect(left, y - 6, platform.width, 10, 4); ctx.fill(); ctx.stroke();
             if (platform.star) {
-              ctx.fillStyle = "#ccff00"; ctx.strokeStyle = "#000";
+              if (motion) ctx.drawImage(glowDot, LANE_MARGIN + platform.x - 16, y - 32, 32, 32);
+              ctx.fillStyle = NEON; ctx.strokeStyle = "#000";
               ctx.beginPath(); ctx.arc(LANE_MARGIN + platform.x, y - 16, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
             }
           });
@@ -180,30 +277,32 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             const y = toScreenY(ghost.state.height);
             if (y < -10 || y > VIEW.height + 10) continue;
             for (const x of wrappedScreenXs(ghost.state.x)) {
-              ctx.globalAlpha = 0.55; ctx.fillStyle = ghost.color;
-              ctx.beginPath(); ctx.arc(x, y, PLAYER_RADIUS * 0.8, 0, Math.PI * 2); ctx.fill();
-              ctx.globalAlpha = 1; ctx.fillStyle = "#000"; ctx.font = "9px monospace"; ctx.textAlign = "center"; ctx.fillText(ghost.label, x, y - 16);
+              ctx.strokeStyle = ghost.color; ctx.lineWidth = 2; ctx.setLineDash([3, 3]);
+              ctx.beginPath(); ctx.arc(x, y, PLAYER_RADIUS * 0.9, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+              ctx.fillStyle = ghost.color; ctx.font = "9px monospace"; ctx.textAlign = "center"; ctx.fillText(ghost.label, x, y - 16);
             }
           }
-          if (!live.current.reducedMotion) {
+          if (motion) {
             for (let index = run.particles.length - 1; index >= 0; index--) {
               const particle = run.particles[index]; particle.life -= dt; particle.vy -= 500 * dt;
               particle.x += particle.vx * dt; particle.y += particle.vy * dt;
               if (particle.life <= 0) { run.particles.splice(index, 1); continue; }
-              ctx.globalAlpha = Math.max(0, particle.life / 0.4); ctx.fillStyle = particle.color;
-              ctx.fillRect(LANE_MARGIN + particle.x - 2, toScreenY(particle.y) - 2, 4, 4);
+              const size = 10 * Math.max(0, particle.life / 0.4);
+              ctx.globalAlpha = Math.max(0, particle.life / 0.4);
+              ctx.drawImage(glowDot, LANE_MARGIN + particle.x - size / 2, toScreenY(particle.y) - size / 2, size, size);
             }
             ctx.globalAlpha = 1;
           }
-          const stretch = live.current.reducedMotion ? 1 : Math.max(0.78, Math.min(1.22, 1 + run.state.vy / 2600));
+          const stretch = motion ? Math.max(0.78, Math.min(1.22, 1 + run.state.vy / 2600)) : 1;
           const facing = run.lastDir === -1 ? "left" : "right";
-          const rows = spriteFrame(sprites, facing, false, 0, facing).frame.rows;
+          if (!playerSprites.has(facing)) playerSprites.set(facing, buildPlayerSprite(spriteFrame(sprites, facing, false, 0, facing).frame.rows));
+          const sprite = playerSprites.get(facing)!, half = sprite.width / 2;
           for (const x of wrappedScreenXs(run.state.x)) {
-            const y = toScreenY(run.state.height), top = y - 75 * stretch;
+            // Lines the 16x16 mask back up with where the old, unpadded sprite used to sit on screen (bottom
+            // near y + 5); the extra PLAYER_SPRITE_PAD on every side is just the glow halo's canvas, not more body.
+            const y = toScreenY(run.state.height), top = y - 75 * stretch - PLAYER_SPRITE_PAD;
             ctx.save(); ctx.translate(x, top); ctx.scale(1, stretch);
-            ctx.beginPath(); ctx.rect(-40, 0, 80, 80); ctx.clip();
-            ctx.fillStyle = "#fff"; rows.forEach((row: string, py: number) => [...row].forEach((pixel, px) => { if (pixel === "#") ctx.fillRect((px - 8) * 5 - 5, py * 5 - 5, 15, 15); }));
-            ctx.fillStyle = "#000"; rows.forEach((row: string, py: number) => [...row].forEach((pixel, px) => { if (pixel === "#") ctx.fillRect((px - 8) * 5, py * 5, 5, 5); }));
+            ctx.drawImage(sprite, -half, 0);
             ctx.restore();
           }
         }
