@@ -153,11 +153,11 @@ type Run = {
 
 export default function FriendClimb({ friendId, client, paused }: GameComponentProps) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  // The height readout changes every physics tick; writing it to this DOM node directly from the render loop
+  // The score readout changes every physics tick; writing it to this DOM node directly from the render loop
   // (throttled below) keeps it live without asking React to re-render the whole component ~60 times a second.
   // A prior version read runRef.current.state.height only inside the JSX, which only re-evaluates on a React
   // re-render — none of which the render loop triggers — so the HUD showed "Height 0" for the whole run.
-  const heightLabel = useRef<HTMLSpanElement>(null);
+  const scoreLabel = useRef<HTMLSpanElement>(null);
   const [status, setStatus] = useState("Loading your Friend…"), [failed, setFailed] = useState(false), [revision, setRevision] = useState(0);
   const [screen, setScreen] = useState<Screen>("pick");
   const [seed, setSeed] = useState<number>(() => todaySeed());
@@ -370,9 +370,12 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
         }
         // ~10 updates/second is plenty for a number that only needs to look alive, and far cheaper than a
         // React re-render on every one of these (up to 60/second).
-        if (heightLabel.current && now - lastHudUpdate > 100) {
+        if (scoreLabel.current && now - lastHudUpdate > 100) {
           lastHudUpdate = now;
-          heightLabel.current.textContent = `Height ${run ? Math.floor(run.state.height / 10) : 0} · ★${run ? run.state.stars : 0}`;
+          // Score, not height, is what the HUD leads with: a star's +25 popup used to look like it vanished
+          // because only the (unrelated-looking) star count ticked up — showing the number the popup actually
+          // added to makes the payoff visible immediately, the same number the result screen settles on.
+          scoreLabel.current.textContent = `Score ${run ? scoreOf(run.state) : 0} · ★${run ? run.state.stars : 0}`;
         }
         node.dataset.x = run ? run.state.x.toFixed(1) : "";
         node.dataset.height = run ? run.state.height.toFixed(1) : "0";
@@ -410,7 +413,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
   const sceneBlocked = paused || menu !== null || screen !== "play" || Boolean(status);
   return <section className="fc-game" aria-label="Friend Climb">
     <div className="fc-top" inert={paused || undefined}>
-      {screen === "play" ? <span ref={heightLabel}>Height 0</span> : <span>Friend Climb</span>}
+      {screen === "play" ? <span ref={scoreLabel}>Score 0</span> : <span>Friend Climb</span>}
       <button type="button" aria-pressed={!muted} disabled={Boolean(status)} onClick={() => {
         const next = !muted; setMuted(next); sound.current?.setMuted(next); if (!next) void sound.current?.unlock();
       }}>{muted ? "Sound off" : "Sound on"}</button>

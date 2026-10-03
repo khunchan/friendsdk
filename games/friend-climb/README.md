@@ -41,9 +41,11 @@ The physics run on a **fixed 1/60s step**, decoupled from the browser's actual f
 the same recorded left/right presses always replay to the exact same score, on any machine, at any frame
 rate — `tower.test.mjs` checks this too. That determinism is also what makes two things possible:
 
-- **A run code to share.** After a run, a short text code (`FC1.<seed>.<moves>!<score>`) encodes the seed and
+- **A run code to share.** After a run, a short text code (`FC2.<seed>.<moves>!<score>`) encodes the seed and
   every direction change — not every frame, so it stays short for a realistic run. A friend pastes it in and
-  races a ghost of that exact run on the same tower. There is no server: the code is the whole message.
+  races a ghost of that exact run on the same tower. There is no server: the code is the whole message. The
+  version number changed once already (v1 → v2, see Known limits) when a scoring bug meant old codes could no
+  longer be replayed to the score they claimed; `decodeRun` refuses a v1 code by name instead of guessing.
 - **A bot ghost from your first attempt.** A simple scripted "bot" (always labeled "bot", never shown as a
   Friend) aims at the next platform with a human-scale reaction delay and an increasing chance to fumble as
   the tower gets harder, so it is an opponent, not an aimbot — `tower.test.mjs` checks that it is reproducible
@@ -60,10 +62,15 @@ rate — `tower.test.mjs` checks this too. That determinism is also what makes t
   either, so device-orientation steering would likely be blocked outright; keyboard and touch are the only
   controls for now.
 - **Ghosts are markers, not sprites.** A pasted run code carries no Friend identity (only a seed, moves and a
-  claimed score), so an opponent's ghost is drawn as a plain colored dot labeled by who it is, not their
-  Friend's artwork.
+  claimed score), so an opponent's ghost is drawn as a dashed outline labeled by who it is, not their Friend's
+  artwork.
 - **Difficulty and the bot's fumble rate are a first pass**, not final balance; both need real playtesting
   to tune properly, same as any new platformer.
+- **Run code version history.** v1 paid out a star's +25 on every single bounce off that platform, not once —
+  repeat bounces on one star platform could inflate a score without limit, a real hole for any future
+  tournament. Fixed by tracking collected stars the same way broken platforms are tracked (once per platform,
+  ever); the run code version moved from `FC1` to `FC2` because this changes what a given seed and recorded
+  moves replay to, and a v1 code is now refused with a clear message rather than replayed to a different score.
 
 ## Checks
 

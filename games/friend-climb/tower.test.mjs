@@ -48,10 +48,37 @@ test("a run code with no direction changes at all still round-trips", () => {
 
 test("decoding rejects text that is not a Friend Climb code", () => {
   assert.throws(() => tower.decodeRun("not a code"), /does not look like/);
-  assert.throws(() => tower.decodeRun("FC1.5.3L!x!y"), /does not look like/);
+  assert.throws(() => tower.decodeRun("FC2.5.3L!x!y"), /does not look like/);
   // "LL" is inside the loose outer shape (only 0-9, a-z, L, N, R are allowed) but has no digits before
   // either letter, so the token scanner can match neither — exercises the leftover-character check.
-  assert.throws(() => tower.decodeRun("FC1.5.LL!a"), /unreadable characters/);
+  assert.throws(() => tower.decodeRun("FC2.5.LL!a"), /unreadable characters/);
+});
+
+test("decoding rejects a v1 code by name instead of silently replaying it to a different score", () => {
+  // v1 (FC1) paid out a star on every bounce off a star platform, not once; its claimed scores are not
+  // reproducible under the fixed logic, so these must be refused with a specific message, not treated as
+  // generic garbage and not replayed to a number that no longer matches what the code claims.
+  assert.throws(() => tower.decodeRun("FC1.5.3L!a"), /older version/);
+  assert.throws(() => tower.decodeRun("FC1.5.3L!a"), error => !/does not look like/.test(error.message));
+});
+
+test("a star only pays out once, even when the same platform is bounced on many times", () => {
+  // A synthetic one-platform tower (the mandatory spawn platform, with its star flag forced on) instead of
+  // generateTower(): with no horizontal input the Friend bounces on this exact platform forever (a known,
+  // correct property of zero input — see the "holding one direction" test above), so this directly exercises
+  // many repeat bounces off one star platform, which is exactly what the bug paid out on every time.
+  const oneStarTower = Object.freeze({
+    seed: 0, windBands: Object.freeze([]),
+    platforms: Object.freeze([{ x: 150, height: 0, width: 90, breaking: false, star: true }]),
+  });
+  let state = tower.startRun(), bounces = 0;
+  for (let tick = 0; tick < 600 && bounces < 8; tick++) {
+    const wasFalling = state.vy < 0;
+    state = tower.step(oneStarTower, state, 0);
+    if (wasFalling && state.vy === tower.BOUNCE_VELOCITY) bounces++;
+  }
+  assert(bounces >= 8, `expected at least 8 bounces off the one platform within 600 ticks, got ${bounces}`);
+  assert.equal(state.stars, 1, `a single star platform must pay out exactly once no matter how many times it is bounced on, got ${state.stars}`);
 });
 
 test("every platform gap and sideways drift stays within what one bounce can clear", () => {
@@ -88,6 +115,16 @@ test("holding one direction the whole run still falls off before the tick limit,
       assert(result.ticks < 60 * 180, `seed ${seed}, dir ${dir}: holding one direction never fell off the tower`);
       assert.equal(result.state.alive, false);
     }
+  }
+});
+
+test("a run never collects more stars than exist among the platforms it actually reached", () => {
+  for (const seed of [1, 2, 3, 9, 1500]) {
+    const towerData = tower.generateTower(seed);
+    const { result } = tower.botRun(seed);
+    const starsAvailable = towerData.platforms.filter(platform => platform.star && platform.height <= result.state.peakHeight).length;
+    assert(result.state.stars <= starsAvailable,
+      `seed ${seed}: collected ${result.state.stars} stars but only ${starsAvailable} star platforms are at or below the peak height reached`);
   }
 });
 

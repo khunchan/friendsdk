@@ -97,13 +97,17 @@ try {
     await assertBounds(page); await gameBounds(child);
     assert.match(await child.locator('.fc-top').textContent(), /Friend Climb/);
 
-    // Race a friend's code: a mismatched-tower code shows a clear warning, garbage shows a decode error.
-    await child.getByLabel("Race a friend's code").fill('FC1.9999.3R!a');
+    // Race a friend's code: a mismatched-tower code shows a clear warning, garbage shows a decode error, and
+    // a code from the pre-fix star-scoring version (FC1) is refused by name instead of replayed to a wrong score.
+    await child.getByLabel("Race a friend's code").fill('FC2.9999.3R!a');
     await child.getByRole('button', { name: 'Load' }).click();
     await child.getByText('different tower', { exact: false }).waitFor();
     await child.getByLabel("Race a friend's code").fill('not a real code');
     await child.getByRole('button', { name: 'Load' }).click();
     await child.getByText('does not look like', { exact: false }).waitFor();
+    await child.getByLabel("Race a friend's code").fill('FC1.5.3R!a');
+    await child.getByRole('button', { name: 'Load' }).click();
+    await child.getByText('older version', { exact: false }).waitFor();
     await child.getByLabel("Race a friend's code").fill('');
 
     // Practice seed is pinned to 1500 by the fixture above; holding left dies in well under 60 ticks * 180s.
@@ -126,7 +130,7 @@ try {
     assert.equal(total, heightPoints + starPoints, 'the breakdown must add up to the total');
     assert.equal(total, score, 'the breakdown total must match the score heading');
     const code = await child.getByLabel('Run code to share').inputValue();
-    assert.match(code, /^FC1\.[0-9a-z]+\.[0-9a-zLNR]*![0-9a-z]+$/, 'The shared run code has the expected shape');
+    assert.match(code, /^FC2\.[0-9a-z]+\.[0-9a-zLNR]*![0-9a-z]+$/, 'The shared run code has the expected shape');
     await assertBounds(page); await gameBounds(child);
 
     // Clipboard access may or may not be granted inside the sandboxed frame; either outcome must be handled.
@@ -137,7 +141,7 @@ try {
     // A second run must start with the Friend visible again, not scrolled off by a stale camera left over
     // from how high the first run climbed (the bug the builder found and fixed after playtesting).
     await child.getByRole('button', { name: 'Play this tower again' }).click();
-    await child.getByText(/^Height 0 /).waitFor();
+    await child.getByText(/^Score 0/).waitFor();
     await page.waitForTimeout(150);
     const playerY = Number(await canvas.getAttribute('data-player-screen-y'));
     assert(playerY >= 0 && playerY <= 640, `The Friend must render inside the canvas on a second run (got screen y ${playerY})`);
@@ -151,12 +155,12 @@ try {
       for (const s of samples) {
         assert(s.y >= 640 * 0.15 && s.y <= 640 * 0.75,
           `at t=${s.t}ms the Friend's screen y (${s.y.toFixed(1)}) left the 15%-75% band — the camera lost it`);
-        // A brief dip just below the spawn height is normal play, not a bug, so a leading "-" is allowed.
-        assert.match(s.hud, /^Height -?\d+ · ★\d+$/, `at t=${s.t}ms the HUD did not read "Height N · ★S" (got "${s.hud}")`);
+        // Score is floor(peakHeight / 10) + stars * 25; peakHeight never decreases, so score never goes negative.
+        assert.match(s.hud, /^Score \d+ · ★\d+$/, `at t=${s.t}ms the HUD did not read "Score N · ★S" (got "${s.hud}")`);
       }
-      const heights = samples.map(s => Number(s.hud.match(/^Height (-?\d+)/)[1]));
-      assert(heights.some((h, i) => i > 0 && h > heights[i - 1]), 'the HUD height must visibly change between samples, not sit frozen at "Height 0"');
-      assert(heights[heights.length - 1] > heights[0], `the HUD height must grow over the climb (${heights[0]} → ${heights[heights.length - 1]})`);
+      const scores = samples.map(s => Number(s.hud.match(/^Score (\d+)/)[1]));
+      assert(scores.some((value, i) => i > 0 && value > scores[i - 1]), 'the HUD score must visibly change between samples, not sit frozen at "Score 0"');
+      assert(scores[scores.length - 1] > scores[0], `the HUD score must grow over the climb (${scores[0]} → ${scores[scores.length - 1]})`);
       assert(samples[samples.length - 1].height > 50, `expected real height after 22s of bot-driven climbing, got ${samples[samples.length - 1].height}`);
       // Not asserting a star was actually collected here: real-time keyboard dispatch cannot land on the
       // exact same ticks tower.ts's own pure simulation would (browser/event-loop timing drifts a little from

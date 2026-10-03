@@ -86,13 +86,13 @@ export function generateTower(seed: number): Tower {
 
 export type RunState = Readonly<{
   tick: number; x: number; height: number; vx: number; vy: number;
-  peakHeight: number; stars: number; broken: ReadonlySet<number>; alive: boolean;
+  peakHeight: number; stars: number; broken: ReadonlySet<number>; starsCollected: ReadonlySet<number>; alive: boolean;
 }>;
 
 export function startRun(): RunState {
   return Object.freeze({
     tick: 0, x: WORLD_WIDTH / 2, height: 0, vx: 0, vy: BOUNCE_VELOCITY,
-    peakHeight: 0, stars: 0, broken: new Set<number>(), alive: true,
+    peakHeight: 0, stars: 0, broken: new Set<number>(), starsCollected: new Set<number>(), alive: true,
   });
 }
 
@@ -115,7 +115,7 @@ export function step(tower: Tower, state: RunState, dir: Dir): RunState {
   const vy = state.vy - GRAVITY * DT;
   const height = state.height + vy * DT;
 
-  let bounceVy = vy, broken = state.broken, stars = state.stars;
+  let bounceVy = vy, broken = state.broken, stars = state.stars, starsCollected = state.starsCollected;
   if (vy < 0) {
     // Falling: did the Friend's vertical segment this tick cross a live platform under its feet?
     for (let index = 0; index < tower.platforms.length; index++) {
@@ -126,13 +126,16 @@ export function step(tower: Tower, state: RunState, dir: Dir): RunState {
       if (horizontal > platform.width / 2 + PLAYER_RADIUS) continue;
       bounceVy = BOUNCE_VELOCITY;
       if (platform.breaking) broken = new Set(broken).add(index);
-      if (platform.star) stars += 1;
+      // platform.star never changes — it is the same platform's star every time it is bounced on, so a star
+      // only pays out the first time this exact platform is landed on (tracked the same way broken is), not
+      // once per bounce. Without this a single star platform paid out forever on repeat bounces.
+      if (platform.star && !starsCollected.has(index)) { stars += 1; starsCollected = new Set(starsCollected).add(index); }
       break; // one platform can be hit per tick; ties are decided by generation order, not render order
     }
   }
   const peakHeight = Math.max(state.peakHeight, height);
   const alive = height >= peakHeight - FALL_MARGIN;
-  return Object.freeze({ tick: state.tick + 1, x, height, vx, vy: bounceVy, peakHeight, stars, broken, alive });
+  return Object.freeze({ tick: state.tick + 1, x, height, vx, vy: bounceVy, peakHeight, stars, broken, starsCollected, alive });
 }
 
 export function scoreOf(state: RunState): number {
@@ -201,9 +204,15 @@ export function botRun(seed: number, maxTicks = 60 * 180): { transitions: Transi
   return { transitions, result: Object.freeze({ ticks: state.tick, state, score: scoreOf(state) }) };
 }
 
-// --- A short text code for sharing a run: "FC1.<seed base36>.<tokens>!<score base36>". ---
+// --- A short text code for sharing a run: "FC2.<seed base36>.<tokens>!<score base36>". ---
 // Each token is "<ticks since the previous change, base36><L|N|R>". Direction letters are uppercase and base36
 // digits are lowercase, so a single regex splits tokens unambiguously without a separator between them.
+//
+// The version number (FC2, was FC1) exists because replaying the same seed and transitions can now produce a
+// different score than it used to: v1 awarded +25 every single time a star platform was landed on, including
+// repeat bounces off the same platform, instead of once per star. A v1 code's claimed score reflects that bug
+// and is no longer reproducible, so decodeRun rejects it by name instead of silently replaying it to a
+// different number (which would have been a believable-looking but wrong result — worse than refusing it).
 const TOKEN = /([0-9a-z]+)([LNR])/g;
 const LETTER: Record<Dir, "L" | "N" | "R"> = { [-1]: "L", 0: "N", 1: "R" };
 const DIR_OF: Record<string, Dir> = { L: -1, N: 0, R: 1 };
@@ -215,13 +224,17 @@ export function encodeRun(seed: number, transitions: readonly Transition[], scor
     previous = tick;
     return token;
   });
-  return `FC1.${seed.toString(36)}.${tokens.join("")}!${score.toString(36)}`;
+  return `FC2.${seed.toString(36)}.${tokens.join("")}!${score.toString(36)}`;
 }
 
 export type DecodedRun = Readonly<{ seed: number; transitions: readonly Transition[]; claimedScore: number }>;
 
 export function decodeRun(code: string): DecodedRun {
-  const match = /^FC1\.([0-9a-z]+)\.([0-9a-zLNR]*)!([0-9a-z]+)$/.exec(code.trim());
+  const trimmed = code.trim();
+  if (/^FC1\./.test(trimmed)) {
+    throw new Error("That run code is from an older version of Friend Climb (its star scoring had a bug) and can no longer be replayed.");
+  }
+  const match = /^FC2\.([0-9a-z]+)\.([0-9a-zLNR]*)!([0-9a-z]+)$/.exec(trimmed);
   if (!match) throw new Error("That run code does not look like a Friend Climb code.");
   const [, seedPart, tokenPart, scorePart] = match;
   const transitions: Transition[] = [];
