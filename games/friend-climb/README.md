@@ -30,6 +30,13 @@ screen below your highest point ends the run.
 Settings has reduced motion (turns off landing squash-and-stretch and sparks; never changes the physics or
 score) and a Sound button (a landing thud and a star chime, off by default).
 
+A zigzag mark on a platform is a **spring**: bouncing off it launches you noticeably higher than a normal
+landing — a repeatable shortcut, never required to clear a gap. Landing on consecutive stars with no plain
+landing in between builds a **combo**: each star in the streak is worth more than the last, up to a cap, reset
+by the next plain landing. Every 100 height-points you reach for the first time in a run fires a one-off
+milestone banner and a subtle background tint shift — purely a progress cue, never fed back into the physics
+or the score.
+
 ## Towers, physics and determinism
 
 A tower is generated entirely from one 32-bit seed: platform positions, widths, which ones break, where the
@@ -41,11 +48,12 @@ The physics run on a **fixed 1/60s step**, decoupled from the browser's actual f
 the same recorded left/right presses always replay to the exact same score, on any machine, at any frame
 rate — `tower.test.mjs` checks this too. That determinism is also what makes two things possible:
 
-- **A run code to share.** After a run, a short text code (`FC2.<seed>.<moves>!<score>`) encodes the seed and
+- **A run code to share.** After a run, a short text code (`FC3.<seed>.<moves>!<score>`) encodes the seed and
   every direction change — not every frame, so it stays short for a realistic run. A friend pastes it in and
   races a ghost of that exact run on the same tower. There is no server: the code is the whole message. The
-  version number changed once already (v1 → v2, see Known limits) when a scoring bug meant old codes could no
-  longer be replayed to the score they claimed; `decodeRun` refuses a v1 code by name instead of guessing.
+  version number has moved twice (v1 → v2 → v3, see Known limits), each time because a change to scoring meant
+  old codes could no longer be replayed to the score they claimed; `decodeRun` refuses a v1 or v2 code by name
+  instead of guessing.
 - **A bot ghost from your first attempt.** A simple scripted "bot" (always labeled "bot", never shown as a
   Friend) aims at the next platform with a human-scale reaction delay and an increasing chance to fumble as
   the tower gets harder, so it is an opponent, not an aimbot — `tower.test.mjs` checks that it is reproducible
@@ -66,11 +74,23 @@ rate — `tower.test.mjs` checks this too. That determinism is also what makes t
   artwork.
 - **Difficulty and the bot's fumble rate are a first pass**, not final balance; both need real playtesting
   to tune properly, same as any new platformer.
-- **Run code version history.** v1 paid out a star's +25 on every single bounce off that platform, not once —
-  repeat bounces on one star platform could inflate a score without limit, a real hole for any future
+- **The SDK's own toolbar (Local preview / Friend # / Friend wallet buttons) cannot be restyled from game
+  code.** Checked directly against `assets/game-frame.css`: it exposes only `--rf-game-max-width` and
+  `--rf-game-aspect-ratio` as custom properties, and every toolbar color is hardcoded in that stylesheet. There
+  is no `host.css` hook or frame variable this game can use to make those buttons match its dark palette — a
+  genuine SDK v0.1.4 limitation, not something worked around here.
+- **Run code version history.** v1 (`FC1`) paid out a star's +25 on every single bounce off that platform, not
+  once — repeat bounces on one star platform could inflate a score without limit, a real hole for any future
   tournament. Fixed by tracking collected stars the same way broken platforms are tracked (once per platform,
-  ever); the run code version moved from `FC1` to `FC2` because this changes what a given seed and recorded
-  moves replay to, and a v1 code is now refused with a clear message rather than replayed to a different score.
+  ever); the run code version moved to `FC2`. v2 had no springs or combo bonus; adding them in v3 (`FC3`)
+  changes what the same seed and recorded moves replay to, same as the v1 fix did. Both older prefixes are now
+  refused with their own clear message rather than replayed to a different score.
+- **Features considered for the "jumping feels empty" pass and not built this round:** moving platforms
+  (left-right) and avoidable obstacles (birds/drones). Both would need their own reachability proof added to
+  `tower.test.mjs` — a moving platform's catchable window changes the gap math everywhere, and an obstacle that
+  ends the run on touch needs a guarantee it can always be dodged, not just usually — which is more scope than
+  springs, milestones and the combo bonus together. Good candidates for a follow-up round once those three have
+  been played with for a while.
 
 ## Checks
 
@@ -78,12 +98,12 @@ Run on 2026-10-03 with SDK v0.1.4 and Node.js 22, from the SDK root:
 
 | Command | Result |
 | --- | --- |
-| `node --test games/friend-climb/tower.test.mjs` | the deterministic core: replay, encode/decode, tower safety, the bot, scoring |
+| `node --test games/friend-climb/tower.test.mjs` | 15 tests: replay, encode/decode, run-code version rejection, reachability, tower safety, springs, combo, the bot, scoring |
 | `node scripts/dev-game.mjs check games/friend-climb` (`friendsdk check`) | game definition and build |
 | `node scripts/dev-game.mjs test games/friend-climb` (`friendsdk test`) | the SDK's automated browser check with its mock wallet |
 | `node games/friend-climb/check-browser.mjs` | this game's own browser check at 1100 px and 360 px |
 | `npm run typecheck` | passed |
-| `npm run check:games` | passed, including `games/friend-climb` |
+| `npm run check:games` | passed for `games/friend-climb`; pre-existing, unrelated failure on `games/friend-rooms` (missing `game.json`, a different frozen project) |
 
 ## Files
 

@@ -48,18 +48,20 @@ test("a run code with no direction changes at all still round-trips", () => {
 
 test("decoding rejects text that is not a Friend Climb code", () => {
   assert.throws(() => tower.decodeRun("not a code"), /does not look like/);
-  assert.throws(() => tower.decodeRun("FC2.5.3L!x!y"), /does not look like/);
+  assert.throws(() => tower.decodeRun("FC3.5.3L!x!y"), /does not look like/);
   // "LL" is inside the loose outer shape (only 0-9, a-z, L, N, R are allowed) but has no digits before
   // either letter, so the token scanner can match neither — exercises the leftover-character check.
-  assert.throws(() => tower.decodeRun("FC2.5.LL!a"), /unreadable characters/);
+  assert.throws(() => tower.decodeRun("FC3.5.LL!a"), /unreadable characters/);
 });
 
-test("decoding rejects a v1 code by name instead of silently replaying it to a different score", () => {
-  // v1 (FC1) paid out a star on every bounce off a star platform, not once; its claimed scores are not
-  // reproducible under the fixed logic, so these must be refused with a specific message, not treated as
-  // generic garbage and not replayed to a number that no longer matches what the code claims.
+test("decoding rejects an old code by name instead of silently replaying it to a different score", () => {
+  // v1 (FC1) paid out a star on every bounce off a star platform, not once, and v2 (FC2) had no springs or
+  // combo bonus; neither version's claimed scores are reproducible under the current logic, so both must be
+  // refused with their own specific message, not treated as generic garbage or replayed to a wrong number.
   assert.throws(() => tower.decodeRun("FC1.5.3L!a"), /older version/);
   assert.throws(() => tower.decodeRun("FC1.5.3L!a"), error => !/does not look like/.test(error.message));
+  assert.throws(() => tower.decodeRun("FC2.5.3L!a"), /older version/);
+  assert.throws(() => tower.decodeRun("FC2.5.3L!a"), error => !/does not look like/.test(error.message));
 });
 
 test("a star only pays out once, even when the same platform is bounced on many times", () => {
@@ -69,7 +71,7 @@ test("a star only pays out once, even when the same platform is bounced on many 
   // many repeat bounces off one star platform, which is exactly what the bug paid out on every time.
   const oneStarTower = Object.freeze({
     seed: 0, windBands: Object.freeze([]),
-    platforms: Object.freeze([{ x: 150, height: 0, width: 90, breaking: false, star: true }]),
+    platforms: Object.freeze([{ x: 150, height: 0, width: 90, breaking: false, star: true, spring: false }]),
   });
   let state = tower.startRun(), bounces = 0;
   for (let tick = 0; tick < 600 && bounces < 8; tick++) {
@@ -140,7 +142,53 @@ test("the ghost bot is deterministic and is always beatable, never a guaranteed 
   assert(wins > 0, "the bot always falls off in 100 seeds — matches would never have a lasting opponent");
 });
 
-test("score counts height in ten-pixel steps plus 25 per star", () => {
-  const state = { ...tower.startRun(), peakHeight: 1234, stars: 3 };
-  assert.equal(tower.scoreOf(state), Math.floor(1234 / 10) + 3 * 25);
+test("score counts height in ten-pixel steps plus star points earned", () => {
+  const state = { ...tower.startRun(), peakHeight: 1234, starPoints: 75 };
+  assert.equal(tower.scoreOf(state), Math.floor(1234 / 10) + 75);
+});
+
+test("a spring platform launches the Friend higher than a normal bounce", () => {
+  // Same synthetic one-platform setup as the star test above, but with spring instead of star: with no
+  // horizontal input the Friend keeps bouncing on this exact platform, so its peak height after one bounce
+  // is a direct, uncontaminated reading of that platform's launch velocity.
+  const springTower = Object.freeze({
+    seed: 0, windBands: Object.freeze([]),
+    platforms: Object.freeze([{ x: 150, height: 0, width: 90, breaking: false, star: false, spring: true }]),
+  });
+  // startRun() begins already mid-air at normal BOUNCE_VELOCITY (as if just off the spawn platform), so the
+  // first landing on the spring only happens after that first ordinary arc finishes; run long enough to cover
+  // that first arc (BOUNCE_AIR_TIME) plus the full rise of the spring-powered arc that follows it.
+  let state = tower.startRun();
+  const ticksNeeded = Math.ceil((tower.BOUNCE_AIR_TIME + tower.SPRING_VELOCITY / tower.GRAVITY) / tower.DT) + 5;
+  for (let tick = 0; tick < ticksNeeded; tick++) state = tower.step(springTower, state, 0);
+  // A normal bounce's peak rise is bounded by MAX_BOUNCE_RISE (see the reachability test above); a spring
+  // launch must clear that bound, since it is defined as strictly faster than the normal bounce velocity.
+  assert(state.peakHeight > tower.MAX_BOUNCE_RISE, `expected a spring launch to rise above ${tower.MAX_BOUNCE_RISE}, got ${state.peakHeight}`);
+});
+
+test("consecutive star landings earn a growing combo bonus, which a plain landing resets", () => {
+  // Five platforms in a row, each one bounce-rise apart (comfortably under MAX_BOUNCE_RISE, so every bounce
+  // lands on exactly the next platform and never skips or doubles up): three star platforms back to back,
+  // then one plain platform, then one more star platform. This scripts an exact, deterministic sequence of
+  // landings to check the combo formula step by step.
+  const platforms = [
+    { x: 150, height: 0, width: 90, breaking: false, star: false, spring: false },
+    { x: 150, height: 100, width: 90, breaking: false, star: true, spring: false },
+    { x: 150, height: 200, width: 90, breaking: false, star: true, spring: false },
+    { x: 150, height: 300, width: 90, breaking: false, star: true, spring: false },
+    { x: 150, height: 400, width: 90, breaking: false, star: false, spring: false },
+    { x: 150, height: 500, width: 90, breaking: false, star: true, spring: false },
+  ];
+  const scriptedTower = Object.freeze({ seed: 0, windBands: Object.freeze([]), platforms: Object.freeze(platforms) });
+  let state = tower.startRun();
+  const comboStreaksAtEachStarLanding = [];
+  let previousStars = state.stars;
+  for (let tick = 0; tick < 2000 && comboStreaksAtEachStarLanding.length < 4; tick++) {
+    state = tower.step(scriptedTower, state, 0);
+    if (state.stars > previousStars) { comboStreaksAtEachStarLanding.push(state.comboStreak); previousStars = state.stars; }
+  }
+  assert.deepEqual(comboStreaksAtEachStarLanding, [1, 2, 3, 1], "combo streak must climb across consecutive stars and reset after a plain landing");
+  const bonusForStreak = streak => tower.STAR_POINTS + Math.min(streak - 1, tower.COMBO_BONUS_MAX_STEPS) * tower.COMBO_BONUS_PER_STEP;
+  const expectedStarPoints = [1, 2, 3, 1].reduce((total, streak) => total + bonusForStreak(streak), 0);
+  assert.equal(state.starPoints, expectedStarPoints, "total star points must match the combo bonus formula applied at each landing");
 });

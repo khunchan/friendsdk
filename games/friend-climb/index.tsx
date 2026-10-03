@@ -162,6 +162,13 @@ function drawSkyline(ctx: CanvasRenderingContext2D, toScreenY: (height: number) 
   }
 }
 
+/** Height-point multiples at which a milestone banner fires and the background tint shifts; purely
+ * presentational — never read by tower.ts, so it cannot affect score or determinism. */
+const MILESTONE_STEP = 100;
+/** Cycled by zone index for a barely-perceptible background shift every MILESTONE_STEP height-points — stays
+ * inside the dark/near-black register the Arcade Neon palette calls for, not a new bright hue. */
+const ZONE_BACKGROUNDS: readonly string[] = ["#060606", "#06090a", "#060a07", "#0a0906", "#090609"];
+
 type Run = {
   tower: Tower; state: RunState; transitions: Transition[]; lastDir: Dir; bot: Ghost; own: Ghost[]; imported: Ghost | null;
   // Per-run camera/particle state. These used to live outside the Run object and never reset between games,
@@ -169,6 +176,9 @@ type Run = {
   // canvas — invisible, camera stuck at the previous run's height. Keeping them here fixes that at the root:
   // a fresh Run means a fresh camera, exactly like a fresh tower and a fresh score.
   cameraHeight: number; particles: Particle[]; popups: Popup[]; starFlash: number;
+  // Highest milestone zone (height-points / MILESTONE_STEP, floored) already announced, plus how long its
+  // banner still has left to show; both purely presentational, derived from state.peakHeight, never fed back.
+  milestoneZone: number; milestoneFlash: number;
 };
 
 export default function FriendClimb({ friendId, client, paused }: GameComponentProps) {
@@ -190,7 +200,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
   const [best, setBest] = useState<Record<number, number>>({}); // this session only; see the disclaimer in the menu
   const [ghosts, setGhosts] = useState<readonly RunRecord[]>([]); // this session's own past runs, newest first
   const [lastScore, setLastScore] = useState(0), [lastCode, setLastCode] = useState("");
-  const [lastHeightPoints, setLastHeightPoints] = useState(0), [lastStars, setLastStars] = useState(0);
+  const [lastHeightPoints, setLastHeightPoints] = useState(0), [lastStars, setLastStars] = useState(0), [lastStarPoints, setLastStarPoints] = useState(0);
   const [importCode, setImportCode] = useState(""), [importError, setImportError] = useState("");
   const [importedGhost, setImportedGhost] = useState<RunRecord | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
@@ -219,7 +229,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     const own = sameTower.slice(0, 3).map((run, index) => makeGhost(`run ${index + 1}`, "rgba(255,255,255,0.3)", tower, run.transitions));
     const bot = makeGhost("bot", "rgba(255,255,255,0.55)", tower, botRun(nextSeed).transitions);
     const imported = importedGhost && importedGhost.seed === nextSeed ? makeGhost("friend's code", "rgba(204,255,0,0.6)", tower, importedGhost.transitions) : null;
-    runRef.current = { tower, state: startRun(), transitions: [], lastDir: 0, bot, own, imported, cameraHeight: 0, particles: [], popups: [], starFlash: 0 };
+    runRef.current = { tower, state: startRun(), transitions: [], lastDir: 0, bot, own, imported, cameraHeight: 0, particles: [], popups: [], starFlash: 0, milestoneZone: 0, milestoneFlash: 0 };
     setIsFirstRun(!playedBefore.current); playedBefore.current = true;
     setSeed(nextSeed); setImportError(""); setScreen("play");
   }
@@ -227,7 +237,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     const score = scoreOf(state), transitions = runRef.current?.transitions ?? [];
     setGhosts(previous => [{ seed, transitions, score }, ...previous].slice(0, 12));
     setBest(previous => ({ ...previous, [seed]: Math.max(previous[seed] ?? 0, score) }));
-    setLastScore(score); setLastHeightPoints(Math.floor(state.peakHeight / HEIGHT_PER_POINT)); setLastStars(state.stars);
+    setLastScore(score); setLastHeightPoints(Math.floor(state.peakHeight / HEIGHT_PER_POINT)); setLastStars(state.stars); setLastStarPoints(state.starPoints);
     setLastCode(encodeRun(seed, transitions, score)); setCopyFailed(false); setScreen("result");
   }
 
@@ -276,7 +286,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
           while (accumulator >= DT && run.state.alive) {
             accumulator -= DT;
             if (dirRef.current !== run.lastDir) { run.lastDir = dirRef.current; run.transitions.push({ tick: run.state.tick, dir: dirRef.current }); }
-            const previousStars = run.state.stars, wasFalling = run.state.vy < 0;
+            const previousStars = run.state.stars, previousStarPoints = run.state.starPoints, wasFalling = run.state.vy < 0;
             run.state = step(run.tower, run.state, dirRef.current);
             run.bot = advanceGhost(run.bot); run.own = run.own.map(advanceGhost);
             if (run.imported) run.imported = advanceGhost(run.imported);
@@ -287,11 +297,19 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             if (run.state.stars > previousStars) {
               sound.current?.play("reward");
               if (!live.current.reducedMotion) {
-                run.popups.push({ x: run.state.x, y: run.state.height + 50, life: 0.9, text: `+${STAR_POINTS}` });
+                // Shows the actual points this landing earned, combo bonus included, not a fixed +25 — the
+                // combo streak that drove it is spelled out right alongside so the bonus isn't a mystery.
+                const gained = run.state.starPoints - previousStarPoints;
+                const comboSuffix = run.state.comboStreak > 1 ? ` combo x${run.state.comboStreak}` : "";
+                run.popups.push({ x: run.state.x, y: run.state.height + 50, life: 0.9, text: `+${gained}${comboSuffix}` });
                 spawnBurst(run.particles, run.state.x, run.state.height + 10, NEON, 10);
                 run.starFlash = 1;
               }
             }
+            // Purely presentational milestone banner/zone tint, every MILESTONE_STEP height-points of the
+            // run's own high-water mark — derived from peakHeight, never fed back into tower.ts's state.
+            const zone = Math.floor(Math.floor(run.state.peakHeight / HEIGHT_PER_POINT) / MILESTONE_STEP);
+            if (zone > run.milestoneZone) { run.milestoneZone = zone; run.milestoneFlash = 1; sound.current?.play("reward"); }
             if (!run.state.alive) sound.current?.play("impact", { volume: 0.7 });
           }
           if (!run.state.alive) endGame(run.state);
@@ -310,7 +328,8 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
 
         const motion = !live.current.reducedMotion;
         ctx.clearRect(0, 0, VIEW.width, VIEW.height);
-        ctx.fillStyle = "#060606"; ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+        const zoneIndex = Math.floor(Math.floor((run?.state.peakHeight ?? 0) / HEIGHT_PER_POINT) / MILESTONE_STEP);
+        ctx.fillStyle = ZONE_BACKGROUNDS[zoneIndex % ZONE_BACKGROUNDS.length]; ctx.fillRect(0, 0, VIEW.width, VIEW.height);
 
         if (motion && run) {
           // Parallax: a stable, deterministic star field (never re-randomized — see starsBetween) plus a
@@ -355,6 +374,16 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             if (motion && !platform.breaking) { ctx.lineWidth = 5; ctx.beginPath(); ctx.roundRect(left, y - 6, platform.width, 10, 4); ctx.stroke(); }
             ctx.strokeStyle = NEON; ctx.lineWidth = 2;
             ctx.beginPath(); ctx.roundRect(left, y - 6, platform.width, 10, 4); ctx.fill(); ctx.stroke();
+            // A spring is reusable (every bounce off it launches higher, not just the first), so it is marked
+            // right on the platform itself, not gated by any collected-state the way a one-shot star is.
+            if (platform.spring) {
+              ctx.strokeStyle = "#000"; ctx.lineWidth = 2;
+              ctx.beginPath();
+              const zigzagLeft = left + 6, zigzagWidth = platform.width - 12;
+              ctx.moveTo(zigzagLeft, y);
+              for (let step = 0; step < 4; step++) ctx.lineTo(zigzagLeft + zigzagWidth * (step + 1) / 4, y + (step % 2 === 0 ? -4 : 4));
+              ctx.stroke();
+            }
             // Gone once the live player's own run has it — run.state.starsCollected, not platform.star alone,
             // which never changes and used to leave every star showing forever, already collected or not.
             if (platform.star && !run.state.starsCollected.has(index)) {
@@ -420,6 +449,18 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
               ctx.fillText(popup.text, LANE_MARGIN + popup.x, toScreenY(popup.y));
               ctx.globalAlpha = 1;
             }
+          }
+          // An announcement, not a decorative effect, so it still shows with reduced motion on — only its
+          // fade timing depends on dt either way.
+          if (run.milestoneFlash > 0) {
+            ctx.globalAlpha = Math.min(1, run.milestoneFlash);
+            ctx.fillStyle = NEON; ctx.strokeStyle = "#000"; ctx.lineWidth = 4;
+            ctx.font = "bold 40px monospace"; ctx.textAlign = "center";
+            const text = `${run.milestoneZone * MILESTONE_STEP}!`;
+            ctx.strokeText(text, VIEW.width / 2, VIEW.height * 0.3);
+            ctx.fillText(text, VIEW.width / 2, VIEW.height * 0.3);
+            ctx.globalAlpha = 1;
+            run.milestoneFlash = Math.max(0, run.milestoneFlash - dt / 1.4);
           }
         }
         // ~10 updates/second is plenty for a number that only needs to look alive, and far cheaper than a
@@ -500,13 +541,14 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
       <h1>Friend Climb</h1>
       <p>Your Friend bounces up a tower on its own; you only steer left and right. The lane wraps — walk off one
         side and you reappear on the other. Watch the ghosts, and see how high you get.</p>
-      <p>Land on a star for +{STAR_POINTS}.</p>
+      <p>Land on a star for +{STAR_POINTS}; chain stars with no plain landing between for a growing combo bonus.
+        Zigzag-marked platforms are springs — they launch you higher than a normal bounce.</p>
       <button type="button" disabled={paused} onClick={() => startGame(todaySeed())}>Tower of the day</button>
       <button type="button" disabled={paused} onClick={() => startGame(randomSeed())}>Practice (new tower)</button>
       <p className="fc-note">Progress and ghosts last only for this open session — closing or reloading the page clears them. There is no save yet.</p>
       <label className="fc-import">
         Race a friend's code
-        <input value={importCode} onChange={event => setImportCode(event.target.value)} placeholder="FC1...." disabled={paused} />
+        <input value={importCode} onChange={event => setImportCode(event.target.value)} placeholder="FC3...." disabled={paused} />
         <button type="button" disabled={paused || !importCode} onClick={loadImportedCode}>Load</button>
       </label>
       {importError && <p role="alert">{importError}</p>}
@@ -515,7 +557,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
 
     {!status && screen === "result" && <div className="fc-result">
       <h1>Score: {lastScore}</h1>
-      <p>Height {lastHeightPoints} + {lastStars} star{lastStars === 1 ? "" : "s"} ({lastStars * STAR_POINTS}) = {lastScore}</p>
+      <p>Height {lastHeightPoints} + {lastStars} star{lastStars === 1 ? "" : "s"} ({lastStarPoints}) = {lastScore}</p>
       <p>Best this session on this tower: {best[seed] ?? lastScore}. Progress resets when this page reloads.</p>
       <button type="button" disabled={paused} onClick={() => startGame(seed)}>Play this tower again</button>
       <button type="button" disabled={paused} onClick={() => setScreen("pick")}>Back</button>

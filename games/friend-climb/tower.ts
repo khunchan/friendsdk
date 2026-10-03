@@ -16,6 +16,14 @@ export const WORLD_WIDTH = 300; // the tower lane; the Friend's x stays within [
 export const FALL_MARGIN = 260; // how far below the highest point reached the camera lets the Friend fall before the run ends
 export const HEIGHT_PER_POINT = 10;
 export const STAR_POINTS = 25;
+/** A rare platform that launches the Friend far higher than a normal landing — strictly a bonus: generation
+ * still only ever requires a normal BOUNCE_VELOCITY bounce to clear any gap (see MAX_BOUNCE_RISE below and
+ * tower.test.mjs's reachability check), so a spring can never be the only way through, only a shortcut. */
+export const SPRING_VELOCITY = BOUNCE_VELOCITY * 1.6;
+/** Extra points per star in an unbroken streak (one star landing right after another, no plain landing
+ * between), on top of the first star's plain STAR_POINTS; capped so the bonus cannot grow without bound. */
+export const COMBO_BONUS_PER_STEP = 10;
+export const COMBO_BONUS_MAX_STEPS = 4;
 /** The highest a single bounce can carry the Friend; platform gaps must stay safely under this. */
 export const MAX_BOUNCE_RISE = BOUNCE_VELOCITY ** 2 / (2 * GRAVITY);
 /** Time in the air between two bounces straight up and back down; bounds how far a gap can drift sideways. */
@@ -46,7 +54,7 @@ export function seedForDate(isoDate: string): number {
   return hash >>> 0;
 }
 
-export type Platform = Readonly<{ x: number; height: number; width: number; breaking: boolean; star: boolean }>;
+export type Platform = Readonly<{ x: number; height: number; width: number; breaking: boolean; star: boolean; spring: boolean }>;
 export type WindBand = Readonly<{ from: number; to: number; push: number }>;
 export type Tower = Readonly<{ seed: number; platforms: readonly Platform[]; windBands: readonly WindBand[] }>;
 
@@ -58,7 +66,7 @@ const GENERATED_HEIGHT = 50_000; // comfortably above any reachable height in a 
  */
 export function generateTower(seed: number): Tower {
   const random = seeded(seed);
-  const platforms: Platform[] = [{ x: WORLD_WIDTH / 2, height: 0, width: 90, breaking: false, star: false }];
+  const platforms: Platform[] = [{ x: WORLD_WIDTH / 2, height: 0, width: 90, breaking: false, star: false, spring: false }];
   const windBands: WindBand[] = [];
   let height = 0, sinceWind = 0;
   while (height < GENERATED_HEIGHT) {
@@ -72,7 +80,10 @@ export function generateTower(seed: number): Tower {
     const x = Math.min(WORLD_WIDTH - width / 2, Math.max(width / 2, previous + drift));
     const breaking = height > 600 && random() < 0.1 + 0.1 * difficulty;
     const star = random() < 0.3;
-    platforms.push({ x, height, width, breaking, star });
+    // Rare, and never on a platform that is about to disappear — a spring is meant to be a repeatable shortcut
+    // (for a ghost replaying the same tower too), not a one-time trick tied to a breaking platform's single use.
+    const spring = !breaking && random() < 0.05;
+    platforms.push({ x, height, width, breaking, star, spring });
     sinceWind += gap;
     if (height > 1500 && sinceWind > 900 + random() * 600) {
       sinceWind = 0;
@@ -86,13 +97,15 @@ export function generateTower(seed: number): Tower {
 
 export type RunState = Readonly<{
   tick: number; x: number; height: number; vx: number; vy: number;
-  peakHeight: number; stars: number; broken: ReadonlySet<number>; starsCollected: ReadonlySet<number>; alive: boolean;
+  peakHeight: number; stars: number; starPoints: number; comboStreak: number;
+  broken: ReadonlySet<number>; starsCollected: ReadonlySet<number>; alive: boolean;
 }>;
 
 export function startRun(): RunState {
   return Object.freeze({
     tick: 0, x: WORLD_WIDTH / 2, height: 0, vx: 0, vy: BOUNCE_VELOCITY,
-    peakHeight: 0, stars: 0, broken: new Set<number>(), starsCollected: new Set<number>(), alive: true,
+    peakHeight: 0, stars: 0, starPoints: 0, comboStreak: 0,
+    broken: new Set<number>(), starsCollected: new Set<number>(), alive: true,
   });
 }
 
@@ -116,6 +129,7 @@ export function step(tower: Tower, state: RunState, dir: Dir): RunState {
   const height = state.height + vy * DT;
 
   let bounceVy = vy, broken = state.broken, stars = state.stars, starsCollected = state.starsCollected;
+  let starPoints = state.starPoints, comboStreak = state.comboStreak;
   if (vy < 0) {
     // Falling: did the Friend's vertical segment this tick cross a live platform under its feet?
     for (let index = 0; index < tower.platforms.length; index++) {
@@ -124,22 +138,34 @@ export function step(tower: Tower, state: RunState, dir: Dir): RunState {
       if (platform.height > state.height || platform.height <= height) continue;
       const sideways = Math.abs(x - platform.x), horizontal = Math.min(sideways, WORLD_WIDTH - sideways);
       if (horizontal > platform.width / 2 + PLAYER_RADIUS) continue;
-      bounceVy = BOUNCE_VELOCITY;
+      bounceVy = platform.spring ? SPRING_VELOCITY : BOUNCE_VELOCITY;
       if (platform.breaking) broken = new Set(broken).add(index);
       // platform.star never changes — it is the same platform's star every time it is bounced on, so a star
       // only pays out the first time this exact platform is landed on (tracked the same way broken is), not
       // once per bounce. Without this a single star platform paid out forever on repeat bounces.
-      if (platform.star && !starsCollected.has(index)) { stars += 1; starsCollected = new Set(starsCollected).add(index); }
+      if (platform.star && !starsCollected.has(index)) {
+        // A streak of star landings with no plain landing between them pays an increasing bonus on top of
+        // STAR_POINTS, capped at COMBO_BONUS_MAX_STEPS steps; any landing that is not a fresh star (a plain
+        // platform, or one whose star is already gone) breaks the streak back to zero.
+        comboStreak += 1;
+        starPoints += STAR_POINTS + Math.min(comboStreak - 1, COMBO_BONUS_MAX_STEPS) * COMBO_BONUS_PER_STEP;
+        stars += 1; starsCollected = new Set(starsCollected).add(index);
+      } else {
+        comboStreak = 0;
+      }
       break; // one platform can be hit per tick; ties are decided by generation order, not render order
     }
   }
   const peakHeight = Math.max(state.peakHeight, height);
   const alive = height >= peakHeight - FALL_MARGIN;
-  return Object.freeze({ tick: state.tick + 1, x, height, vx, vy: bounceVy, peakHeight, stars, broken, starsCollected, alive });
+  return Object.freeze({
+    tick: state.tick + 1, x, height, vx, vy: bounceVy, peakHeight, stars, starPoints, comboStreak,
+    broken, starsCollected, alive,
+  });
 }
 
 export function scoreOf(state: RunState): number {
-  return Math.floor(state.peakHeight / HEIGHT_PER_POINT) + state.stars * STAR_POINTS;
+  return Math.floor(state.peakHeight / HEIGHT_PER_POINT) + state.starPoints;
 }
 
 export type Transition = Readonly<{ tick: number; dir: Dir }>;
@@ -204,15 +230,14 @@ export function botRun(seed: number, maxTicks = 60 * 180): { transitions: Transi
   return { transitions, result: Object.freeze({ ticks: state.tick, state, score: scoreOf(state) }) };
 }
 
-// --- A short text code for sharing a run: "FC2.<seed base36>.<tokens>!<score base36>". ---
+// --- A short text code for sharing a run: "FC3.<seed base36>.<tokens>!<score base36>". ---
 // Each token is "<ticks since the previous change, base36><L|N|R>". Direction letters are uppercase and base36
 // digits are lowercase, so a single regex splits tokens unambiguously without a separator between them.
 //
-// The version number (FC2, was FC1) exists because replaying the same seed and transitions can now produce a
-// different score than it used to: v1 awarded +25 every single time a star platform was landed on, including
-// repeat bounces off the same platform, instead of once per star. A v1 code's claimed score reflects that bug
-// and is no longer reproducible, so decodeRun rejects it by name instead of silently replaying it to a
-// different number (which would have been a believable-looking but wrong result — worse than refusing it).
+// The version number has moved twice, each time because the same seed and transitions started replaying to a
+// different score than before: FC1 -> FC2 fixed a star paying out on every repeat bounce instead of once; FC2
+// -> FC3 added springs and the star combo bonus, which change scoring outright. Both old prefixes are refused
+// by name instead of silently replaying to a number that no longer matches what the code claims.
 const TOKEN = /([0-9a-z]+)([LNR])/g;
 const LETTER: Record<Dir, "L" | "N" | "R"> = { [-1]: "L", 0: "N", 1: "R" };
 const DIR_OF: Record<string, Dir> = { L: -1, N: 0, R: 1 };
@@ -224,7 +249,7 @@ export function encodeRun(seed: number, transitions: readonly Transition[], scor
     previous = tick;
     return token;
   });
-  return `FC2.${seed.toString(36)}.${tokens.join("")}!${score.toString(36)}`;
+  return `FC3.${seed.toString(36)}.${tokens.join("")}!${score.toString(36)}`;
 }
 
 export type DecodedRun = Readonly<{ seed: number; transitions: readonly Transition[]; claimedScore: number }>;
@@ -234,7 +259,10 @@ export function decodeRun(code: string): DecodedRun {
   if (/^FC1\./.test(trimmed)) {
     throw new Error("That run code is from an older version of Friend Climb (its star scoring had a bug) and can no longer be replayed.");
   }
-  const match = /^FC2\.([0-9a-z]+)\.([0-9a-zLNR]*)!([0-9a-z]+)$/.exec(trimmed);
+  if (/^FC2\./.test(trimmed)) {
+    throw new Error("That run code is from an older version of Friend Climb (before springs and the star combo bonus) and can no longer be replayed.");
+  }
+  const match = /^FC3\.([0-9a-z]+)\.([0-9a-zLNR]*)!([0-9a-z]+)$/.exec(trimmed);
   if (!match) throw new Error("That run code does not look like a Friend Climb code.");
   const [, seedPart, tokenPart, scorePart] = match;
   const transitions: Transition[] = [];

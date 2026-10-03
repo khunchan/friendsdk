@@ -98,14 +98,18 @@ try {
     assert.match(await child.locator('.fc-top').textContent(), /Friend Climb/);
 
     // Race a friend's code: a mismatched-tower code shows a clear warning, garbage shows a decode error, and
-    // a code from the pre-fix star-scoring version (FC1) is refused by name instead of replayed to a wrong score.
-    await child.getByLabel("Race a friend's code").fill('FC2.9999.3R!a');
+    // codes from either pre-fix version (FC1's star-scoring bug, FC2's missing springs/combo bonus) are
+    // refused by name instead of being replayed to a wrong score.
+    await child.getByLabel("Race a friend's code").fill('FC3.9999.3R!a');
     await child.getByRole('button', { name: 'Load' }).click();
     await child.getByText('different tower', { exact: false }).waitFor();
     await child.getByLabel("Race a friend's code").fill('not a real code');
     await child.getByRole('button', { name: 'Load' }).click();
     await child.getByText('does not look like', { exact: false }).waitFor();
     await child.getByLabel("Race a friend's code").fill('FC1.5.3R!a');
+    await child.getByRole('button', { name: 'Load' }).click();
+    await child.getByText('older version', { exact: false }).waitFor();
+    await child.getByLabel("Race a friend's code").fill('FC2.5.3R!a');
     await child.getByRole('button', { name: 'Load' }).click();
     await child.getByText('older version', { exact: false }).waitFor();
     await child.getByLabel("Race a friend's code").fill('');
@@ -120,17 +124,19 @@ try {
     const scoreText = await child.getByRole('heading', { name: /^Score: \d+$/ }).textContent();
     const score = Number(scoreText.replace('Score: ', ''));
     assert(score > 0, 'A real run scored above zero');
-    // The score breakdown (height points + stars × 25 = total) must add up, whether or not this particular
-    // short run happened to land on a star — proves the breakdown line itself is wired correctly either way.
+    // The score breakdown (height points + star points earned = total) must add up, whether or not this
+    // particular short run happened to land on a star, and whether or not a combo bonus inflated the star
+    // points above a flat 25 each — proves the breakdown line itself is wired to the real starPoints either way.
     const breakdown = await child.locator('.fc-result p').first().textContent();
     const parsed = breakdown.match(/^Height (\d+) \+ (\d+) stars? \((\d+)\) = (\d+)$/);
     assert(parsed, `the score breakdown line did not match the expected shape (got "${breakdown}")`);
     const [, heightPoints, starCount, starPoints, total] = parsed.map(Number);
-    assert.equal(starPoints, starCount * 25, 'star points must be the star count times 25');
+    assert(starPoints >= starCount * 25, 'star points must be at least the star count times 25 (a combo bonus only ever adds on top)');
+    assert(starCount > 0 || starPoints === 0, 'zero stars must mean zero star points');
     assert.equal(total, heightPoints + starPoints, 'the breakdown must add up to the total');
     assert.equal(total, score, 'the breakdown total must match the score heading');
     const code = await child.getByLabel('Run code to share').inputValue();
-    assert.match(code, /^FC2\.[0-9a-z]+\.[0-9a-zLNR]*![0-9a-z]+$/, 'The shared run code has the expected shape');
+    assert.match(code, /^FC3\.[0-9a-z]+\.[0-9a-zLNR]*![0-9a-z]+$/, 'The shared run code has the expected shape');
     await assertBounds(page); await gameBounds(child);
 
     // Clipboard access may or may not be granted inside the sandboxed frame; either outcome must be handled.
@@ -155,7 +161,7 @@ try {
       for (const s of samples) {
         assert(s.y >= 640 * 0.15 && s.y <= 640 * 0.75,
           `at t=${s.t}ms the Friend's screen y (${s.y.toFixed(1)}) left the 15%-75% band — the camera lost it`);
-        // Score is floor(peakHeight / 10) + stars * 25; peakHeight never decreases, so score never goes negative.
+        // Score is floor(peakHeight / 10) + starPoints; peakHeight never decreases, so score never goes negative.
         assert.match(s.hud, /^Score \d+ · ★\d+$/, `at t=${s.t}ms the HUD did not read "Score N · ★S" (got "${s.hud}")`);
       }
       const scores = samples.map(s => Number(s.hud.match(/^Score (\d+)/)[1]));
