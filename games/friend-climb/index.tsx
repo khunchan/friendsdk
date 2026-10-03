@@ -163,10 +163,13 @@ function drawSkyline(ctx: CanvasRenderingContext2D, toScreenY: (height: number) 
   }
 }
 
-/** Height-point multiples at which a milestone banner fires and the background tint shifts; purely
- * presentational — never read by tower.ts, so it cannot affect score or determinism. */
-const MILESTONE_STEP = 100;
-/** Cycled by zone index for a barely-perceptible background shift every MILESTONE_STEP height-points — stays
+/** Score multiples (the exact same number the HUD's "Score N" reads, via scoreOf — not a separate height or
+ * distance unit) at which a milestone banner fires and the background tint shifts; purely presentational —
+ * never read by tower.ts, so it cannot affect score or determinism. scoreOf is monotonically non-decreasing
+ * over a run (both of its inputs, peakHeight and starPoints, only ever grow), so a zone, once reached, is
+ * never re-announced. */
+const MILESTONE_STEP = 1000;
+/** Cycled by zone index for a barely-perceptible background shift every MILESTONE_STEP score points — stays
  * inside the dark/near-black register the Arcade Neon palette calls for, not a new bright hue. */
 const ZONE_BACKGROUNDS: readonly string[] = ["#060606", "#06090a", "#060a07", "#0a0906", "#090609"];
 
@@ -178,8 +181,9 @@ type Run = {
   // a fresh Run means a fresh camera, exactly like a fresh tower and a fresh score. (There is no separate
   // cameraHeight field: the camera is state.peakHeight directly, every frame — see CAMERA_ANCHOR above.)
   particles: Particle[]; popups: Popup[]; starFlash: number;
-  // Highest milestone zone (height-points / MILESTONE_STEP, floored) already announced, plus how long its
-  // banner still has left to show; both purely presentational, derived from state.peakHeight, never fed back.
+  // Highest milestone zone (scoreOf(state) / MILESTONE_STEP, floored) already announced, plus how long its
+  // banner still has left to show; both purely presentational, derived from the same score the HUD shows,
+  // never fed back into it.
   milestoneZone: number; milestoneFlash: number;
 };
 
@@ -221,6 +225,13 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
   const runRef = useRef<Run | null>(null);
   const playedBefore = useRef(false); // for the "land on a star" hint, shown only during the session's first run
   const [isFirstRun, setIsFirstRun] = useState(true);
+  // The control hint ("Arrow keys or A/D... hold either side") shows for only the first few seconds of EVERY
+  // run, not the whole time — it used to sit at the bottom of the screen for the run's entire length, which
+  // is also where the SDK's own toolbar lives (see style.css's --fc-safe-zone comment); moving it under the
+  // HUD and timing it out keeps the bottom clear and stops it from becoming permanent on-screen clutter.
+  const [controlHintVisible, setControlHintVisible] = useState(true);
+  const controlHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (controlHintTimer.current) clearTimeout(controlHintTimer.current); }, []);
   const stop = () => { heldKeys.current.clear(); heldPointer.current = null; dirRef.current = 0; };
 
   function startGame(nextSeed: number) {
@@ -233,6 +244,9 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     const imported = importedGhost && importedGhost.seed === nextSeed ? makeGhost("friend's code", "rgba(204,255,0,0.6)", tower, importedGhost.transitions) : null;
     runRef.current = { tower, state: startRun(), transitions: [], lastDir: 0, bot, own, imported, particles: [], popups: [], starFlash: 0, milestoneZone: 0, milestoneFlash: 0 };
     setIsFirstRun(!playedBefore.current); playedBefore.current = true;
+    setControlHintVisible(true);
+    if (controlHintTimer.current) clearTimeout(controlHintTimer.current);
+    controlHintTimer.current = setTimeout(() => setControlHintVisible(false), 4500);
     setSeed(nextSeed); setImportError(""); setScreen("play");
   }
   function endGame(state: RunState) {
@@ -308,9 +322,10 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
                 run.starFlash = 1;
               }
             }
-            // Purely presentational milestone banner/zone tint, every MILESTONE_STEP height-points of the
-            // run's own high-water mark — derived from peakHeight, never fed back into tower.ts's state.
-            const zone = Math.floor(Math.floor(run.state.peakHeight / HEIGHT_PER_POINT) / MILESTONE_STEP);
+            // Purely presentational milestone banner/zone tint, every MILESTONE_STEP points of the same
+            // score the HUD shows ("Score N") — strictly in sync with it, not a separate height or distance
+            // reading, since that was confusing (a "100!" banner next to a HUD reading a different number).
+            const zone = Math.floor(scoreOf(run.state) / MILESTONE_STEP);
             if (zone > run.milestoneZone) { run.milestoneZone = zone; run.milestoneFlash = 1; sound.current?.play("reward"); }
             if (!run.state.alive) sound.current?.play("impact", { volume: 0.7 });
           }
@@ -324,7 +339,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
 
         const motion = !live.current.reducedMotion;
         ctx.clearRect(0, 0, VIEW.width, VIEW.height);
-        const zoneIndex = Math.floor(Math.floor((run?.state.peakHeight ?? 0) / HEIGHT_PER_POINT) / MILESTONE_STEP);
+        const zoneIndex = run ? Math.floor(scoreOf(run.state) / MILESTONE_STEP) : 0;
         ctx.fillStyle = ZONE_BACKGROUNDS[zoneIndex % ZONE_BACKGROUNDS.length]; ctx.fillRect(0, 0, VIEW.width, VIEW.height);
 
         if (motion && run) {
@@ -447,16 +462,19 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             }
           }
           // An announcement, not a decorative effect, so it still shows with reduced motion on — only its
-          // fade timing depends on dt either way.
+          // fade timing depends on dt either way. A brief, bright pop (never fully opaque, and under a
+          // second total) rather than a lingering block of text, so it reads as a flash and never meaningfully
+          // hides a platform underneath it for long enough to matter.
           if (run.milestoneFlash > 0) {
-            ctx.globalAlpha = Math.min(1, run.milestoneFlash);
+            const fontSize = 34 + 10 * run.milestoneFlash;
+            ctx.globalAlpha = Math.min(0.85, run.milestoneFlash * 1.2);
             ctx.fillStyle = NEON; ctx.strokeStyle = "#000"; ctx.lineWidth = 4;
-            ctx.font = "bold 40px monospace"; ctx.textAlign = "center";
+            ctx.font = `bold ${fontSize}px monospace`; ctx.textAlign = "center";
             const text = `${run.milestoneZone * MILESTONE_STEP}!`;
             ctx.strokeText(text, VIEW.width / 2, VIEW.height * 0.3);
             ctx.fillText(text, VIEW.width / 2, VIEW.height * 0.3);
             ctx.globalAlpha = 1;
-            run.milestoneFlash = Math.max(0, run.milestoneFlash - dt / 1.4);
+            run.milestoneFlash = Math.max(0, run.milestoneFlash - dt / 0.9);
           }
           // The death boundary itself: with CAMERA_ANCHOR derived from FALL_MARGIN above, height ==
           // peakHeight - FALL_MARGIN always maps to exactly VIEW.height (REFERENCE_HEIGHT) — the very bottom
@@ -539,7 +557,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
           heldPointer.current = (event.clientX - rect.left) / rect.width < 0.5 ? -1 : 1; }}
         onPointerUp={() => { heldPointer.current = null; }} onPointerCancel={() => { heldPointer.current = null; }} />
       {screen === "play" && !status && isFirstRun && <p className="fc-hint fc-star-hint">Land on a star for +{STAR_POINTS}</p>}
-      {screen === "play" && !status && <p className="fc-hint"><span className="fc-desktop-controls">Arrow keys or A/D · </span>Hold either side of the tower</p>}
+      {screen === "play" && !status && controlHintVisible && <p className="fc-hint"><span className="fc-desktop-controls">Arrow keys or A/D · </span>Hold either side of the tower</p>}
     </div>
 
     {status && <div className="fc-status" role={failed ? "alert" : "status"}><p>{status}</p>

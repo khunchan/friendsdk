@@ -33,9 +33,9 @@ score) and a Sound button (a landing thud and a star chime, off by default).
 A zigzag mark on a platform is a **spring**: bouncing off it launches you noticeably higher than a normal
 landing — a repeatable shortcut, never required to clear a gap. Landing on consecutive stars with no plain
 landing in between builds a **combo**: each star in the streak is worth more than the last, up to a cap, reset
-by the next plain landing. Every 100 height-points you reach for the first time in a run fires a one-off
-milestone banner and a subtle background tint shift — purely a progress cue, never fed back into the physics
-or the score.
+by the next plain landing. Every 1000 points of score — the exact same number the HUD's "Score N" reads, not
+a separate height or distance unit — fires a brief, bright milestone banner and a subtle background tint
+shift, each exactly once. Both are purely a progress cue, never fed back into the physics or the score itself.
 
 ## The camera and the death boundary
 
@@ -51,6 +51,36 @@ makes `height == peakHeight - FALL_MARGIN` (the exact death boundary) always map
 very bottom row of the canvas — every tick, not approximately. A thin green line and a soft fog mark that
 row on screen. `tower.test.mjs` proves this alignment exactly with pure math; `check-browser.mjs` checks the
 real renderer never visibly strays far past it before a run actually ends, at both 1100px and 360px.
+
+## Staying clear of the SDK's own toolbar
+
+The SDK's trusted-runtime toolbar ("Local preview", "Friend #...", "Friend wallet") is not part of this game
+at all — it's a sibling of the game's sandboxed iframe in the host's own page, absolutely positioned on top
+of it. Game code cannot measure or reach it (confirmed directly against `assets/game-frame.css`: no CSS
+custom property exposes its size). Measured from that stylesheet instead: its buttons are a fixed
+`min-height:36px` at any viewport width, floating `bottom:14px` above the frame's edge normally and
+`bottom:6px` at narrow (≤520px) viewports — a ~50px/~42px exclusion band, with a further ~13px of slack
+possible if its mode label wraps to a second line under a long enough string. `style.css`'s
+`--fc-safe-zone` (80px) is one flat reservation comfortably past either case, used for every screen size
+rather than mirroring the SDK's own breakpoint, so a future SDK release moving that breakpoint can't quietly
+reopen the gap.
+
+That reservation lives entirely in `.fc-scene`'s own CSS box (`bottom: var(--fc-safe-zone)` instead of
+filling the frame edge to edge) — the canvas's ResizeObserver in `index.tsx` only ever reads *that* box's
+size, so the camera, `REFERENCE_HEIGHT`, `FALL_MARGIN` and the death-boundary math above all needed zero
+changes to respect it; `.fc-game`'s own dark background already shows through the reserved strip, reading as
+plain background rather than cut-off gameplay. The control hint ("Arrow keys or A/D...") moved from the
+bottom of the screen to just under the HUD, and now only shows for the first few seconds of each run rather
+than the whole time. `check-browser.mjs` reads the toolbar's real bounding box directly from the host page
+(`.rf-frame-toolbar`) and asserts neither the canvas (and the death-boundary fog drawn at its bottom edge)
+nor either hint ever overlaps it, at both 1100px and 360px.
+
+One non-obvious wrinkle found while fixing this: this game's own `@media(max-width:520px)` rules inside the
+sandboxed iframe match unconditionally, at *both* test widths — `host.css` caps the frame itself to 480px
+wide (`--rf-game-max-width`), so the iframe's own internal viewport is always ≤520px regardless of the outer
+browser window's width. A rule meant to apply only "at the bottom, same place as the control hint" need
+enough selector specificity to still win against that always-active narrow block, not just correct source
+order (see `.fc-hint.fc-star-hint`'s comment in `style.css`).
 
 An earlier version eased the camera toward the peak with an exponential lag, purely for a smoother look. That
 lag floated relative to `FALL_MARGIN` depending on climb speed, so a platform that was still clearly visible

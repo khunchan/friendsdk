@@ -1,3 +1,14 @@
+/* The SDK's own trusted-runtime toolbar ("Local preview", "Friend #...", "Friend wallet") lives OUTSIDE this
+   sandboxed game entirely — a sibling of our iframe in the host's own DOM, absolutely positioned on top of
+   it (assets/game-frame.css: .rf-frame-toolbar, z-index:2). Game code cannot measure or reach it. Measured
+   directly from that stylesheet: its buttons are a fixed min-height:36px regardless of viewport, sitting
+   bottom:14px up from the frame's edge at normal widths and bottom:6px at <=520px — a ~50px/~42px exclusion
+   band from the frame's bottom edge, plus the "Live - Robinhood" mode label can wrap to a second line if
+   squeezed, adding a further ~13px in the worst case. One flat, conservative reservation (comfortably past
+   either measured case, counting that wrap risk) is used for every screen size rather than mirroring the
+   SDK's own 520px breakpoint — a value tied to light reading of their CSS would silently go stale if a
+   future SDK version ever moves that breakpoint, where a flat safe margin just stays safe. */
+:root{--fc-safe-zone:80px}
 .fc-game{position:relative;width:100%;height:100%;overflow:hidden;color:#eafff0;background:#060606;font:14px/1.4 monospace}
 .fc-top{position:absolute;inset:14px 16px auto;z-index:2;display:flex;align-items:center;gap:8px;pointer-events:none}
 .fc-top span{margin-right:auto;background:#000;color:#ccff00;padding:8px;border:2px solid #ccff00;text-shadow:0 0 4px rgba(204,255,0,.6)}
@@ -5,17 +16,30 @@
 .fc-game button,.fc-loading button{font:inherit;cursor:pointer;padding:9px 13px;border:2px solid #ccff00;background:#0c0c0c;color:#ccff00}
 .fc-game button:disabled{cursor:default;opacity:.5}
 .fc-game button[aria-pressed="true"]{background:#ccff00;color:#000}
-/* No centering/background here on purpose: the canvas's own backing store is resized in index.tsx to match
-   this container's exact aspect ratio (see the ResizeObserver there), so it fills edge to edge with no gap
-   on any side to show through — this element's own background never actually becomes visible during play. */
-.fc-scene{position:absolute;inset:0;overflow:hidden;background:#060606}
+/* Stops short of the frame's bottom edge by --fc-safe-zone, left over for the SDK toolbar — .fc-game's own
+   background (above) already fills that strip, so it reads as plain background, never gameplay content. The
+   canvas's backing store is resized in index.tsx to match THIS box's exact aspect ratio (see the
+   ResizeObserver there), so it fills edge to edge within that shrunk box with no gap on any side — and
+   because that resize logic only ever reads this element's own box, reserving the strip here is the only
+   change needed: the camera, the death boundary and REFERENCE_HEIGHT in index.tsx/tower.ts need no change
+   at all, they already render into whatever box they are given. */
+.fc-scene{position:absolute;inset:0;bottom:var(--fc-safe-zone);overflow:hidden;background:#060606}
 .fc-scene canvas{display:block;width:100%;height:100%;image-rendering:pixelated}
-/* The SDK toolbar overlays the bottom-left and bottom-right corners of the frame; this stays clear of it. */
-.fc-hint{position:absolute;bottom:54px;left:16px;right:16px;margin:0;text-align:center;font-size:11px;pointer-events:none;color:#9bd98a}
-.fc-star-hint{bottom:72px;color:#ccff00}
-/* justify-content:flex-start (not center) plus generous bottom padding, so tall content never lands under
-   the SDK's toolbar, which always overlays the bottom-left and bottom-right corners of the frame. */
-.fc-status,.fc-pick,.fc-result{position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:flex-start;background:#060606;text-align:center;padding:24px 24px 90px;overflow:auto}
+/* Directly under .fc-top's HUD row, not at the bottom — see index.tsx, which also only shows this for the
+   first few seconds of a run, not the whole time. */
+.fc-hint{position:absolute;top:58px;left:16px;right:16px;margin:0;text-align:center;font-size:11px;pointer-events:none;color:#9bd98a}
+/* Shares .fc-hint's base rule (same element, class="fc-hint fc-star-hint") but stays near the stars
+   themselves at the bottom rather than moving to the top with the control hint — top:auto cancels out
+   .fc-hint's own top so position:absolute does not stretch the element between both.
+   Compound selector (.fc-hint.fc-star-hint, not just .fc-star-hint) on purpose: this game's iframe is itself
+   always <=480px wide (host.css caps --rf-game-max-width there), so the @media(max-width:520px) block below
+   always matches INSIDE the game regardless of the outer page's width, and its own .fc-hint{top:...} rule
+   comes later in this file — same specificity as a lone .fc-star-hint rule would have meant that later media
+   rule wins the "top" property back. The extra class here raises specificity so this wins unconditionally. */
+.fc-hint.fc-star-hint{top:auto;bottom:calc(var(--fc-safe-zone) + 18px);color:#ccff00}
+/* justify-content:flex-start (not center) plus bottom padding past --fc-safe-zone, so tall content never
+   lands under the SDK's toolbar (see --fc-safe-zone's comment above for exactly where that is). */
+.fc-status,.fc-pick,.fc-result{position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:flex-start;background:#060606;text-align:center;padding:24px 24px calc(var(--fc-safe-zone) + 10px);overflow:auto}
 .fc-status{justify-content:center}
 .fc-status p{margin:0}
 .fc-pick h1,.fc-result h1{margin:0;font-size:22px;color:#ccff00;text-shadow:0 0 6px rgba(204,255,0,.5)}
@@ -28,10 +52,9 @@
   .fc-top{inset:6px 6px auto;gap:4px;font-size:9px}
   .fc-top button{padding:4px 6px;min-height:0;white-space:nowrap}
   .fc-top span{padding:4px 6px;white-space:nowrap}
-  .fc-hint{bottom:42px;font-size:10px}
-  .fc-star-hint{bottom:56px}
+  .fc-hint{top:46px;font-size:10px}
   .fc-desktop-controls{display:none}
-  .fc-pick,.fc-result{padding:14px 14px 80px;gap:10px}
+  .fc-pick,.fc-result{padding:14px 14px calc(var(--fc-safe-zone) + 10px);gap:10px}
   .fc-status{padding:14px;gap:10px}
   .fc-pick h1,.fc-result h1{font-size:18px}
 }

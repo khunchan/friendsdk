@@ -62,6 +62,11 @@ async function driveAndWatchCamera(page, canvas, transitions, seconds) {
   return samples;
 }
 
+/** Standard axis-aligned rectangle intersection test for two Playwright boundingBox() results. */
+function rectsOverlap(a, b) {
+  return Boolean(a && b && !(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y));
+}
+
 /** No `.rf-frame-menu`/world-prompt scaffolding in this game, but still nothing may escape the frame. */
 async function gameBounds(child) {
   assert.deepEqual(await child.locator('body').evaluate(() => {
@@ -124,6 +129,27 @@ try {
     // 360px since this loop runs the whole check at both.
     assert.equal(await canvas.evaluate(el => el.height), 640,
       `the visible world height must stay fixed regardless of screen width (checked at ${width}px)`);
+
+    // The SDK's own trusted-runtime toolbar (.rf-frame-toolbar) lives in the HOST page, a sibling of the
+    // game's sandboxed iframe, not inside it — so it's read directly off the top-level `page`, not `child`.
+    // Game code cannot reach or measure it from inside the sandbox (see style.css's --fc-safe-zone comment),
+    // which is exactly why this has to be checked end to end here rather than asserted from inside the game.
+    const toolbarBox = await page.locator('.rf-frame-toolbar').boundingBox();
+    assert(toolbarBox, `expected to find the SDK toolbar in the host page at ${width}px`);
+    const canvasBox = await canvas.boundingBox();
+    // The death-boundary fog is always drawn at the very bottom of the canvas's own box (see index.tsx), so
+    // checking the canvas's box against the toolbar's is exactly checking the death boundary against it.
+    assert(canvasBox.y + canvasBox.height <= toolbarBox.y + 1,
+      `at ${width}px the canvas (and the death-boundary fog drawn at its bottom edge) reaches y=${(canvasBox.y + canvasBox.height).toFixed(1)}, into the SDK toolbar starting at y=${toolbarBox.y.toFixed(1)}`);
+    // This is also this session's first run, so both the control hint (shown for the first few seconds of
+    // every run) and the star hint (shown only on the session's first run) are visible right now.
+    const controlHintBox = await child.locator('.fc-hint:not(.fc-star-hint)').boundingBox();
+    const starHintBox = await child.locator('.fc-star-hint').boundingBox();
+    assert(controlHintBox, `expected the control hint to be visible right after starting a run at ${width}px`);
+    assert(starHintBox, `expected the star hint to be visible on the session's first run at ${width}px`);
+    assert(!rectsOverlap(controlHintBox, toolbarBox), `at ${width}px the control hint overlaps the SDK toolbar`);
+    assert(!rectsOverlap(starHintBox, toolbarBox), `at ${width}px the star hint overlaps the SDK toolbar`);
+
     await page.keyboard.down('ArrowLeft');
     // Poll tightly (not the half-second cadence used elsewhere in this file) through the real descent to
     // death, tracking the worst (highest) screen y the Friend was rendered at while the canvas still called
