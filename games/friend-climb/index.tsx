@@ -8,7 +8,7 @@ import { createFriendSoundKit, type FriendSoundKit } from "@rarefriends/friendsd
 import "@rarefriends/friendsdk/frame.css";
 import "./style.css";
 import {
-  DT, WORLD_WIDTH, PLAYER_RADIUS,
+  DT, WORLD_WIDTH, PLAYER_RADIUS, HEIGHT_PER_POINT, STAR_POINTS,
   type Dir, type Tower, type RunState, type Transition,
   seedForDate, generateTower, startRun, step, scoreOf, botRun, encodeRun, decodeRun,
 } from "./tower";
@@ -35,6 +35,7 @@ type Ghost = Readonly<{ label: string; color: string; tower: Tower; transitions:
 type RunRecord = Readonly<{ seed: number; transitions: readonly Transition[]; score: number }>;
 type Screen = "pick" | "play" | "result";
 type Particle = { x: number; y: number; vx: number; vy: number; life: number; color: string };
+type Popup = { x: number; y: number; life: number; text: string };
 
 function makeGhost(label: string, color: string, tower: Tower, transitions: readonly Transition[]): Ghost {
   return { label, color, tower, transitions, dir: 0, state: startRun(), index: 0 };
@@ -109,6 +110,17 @@ function buildHazardPattern(ctx: CanvasRenderingContext2D): CanvasPattern {
   return ctx.createPattern(tile, "repeat")!;
 }
 
+/** A classic five-point star outline, used for both the collectible stars and the parallax field. */
+function starPath(ctx: CanvasRenderingContext2D, cx: number, cy: number, outerR: number, innerR: number) {
+  ctx.beginPath();
+  for (let point = 0; point < 10; point++) {
+    const radius = point % 2 === 0 ? outerR : innerR, angle = (Math.PI / 5) * point - Math.PI / 2;
+    const x = cx + Math.cos(angle) * radius, y = cy + Math.sin(angle) * radius;
+    if (point === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+}
+
 /** A deterministic, stable star field: which world-height "bands" carry a star, and where, never changes
  * from frame to frame (it is not re-randomized on every draw), so stars hold still while the camera scrolls.
  * Purely decorative — unrelated to tower.ts's seeded generation, so it never affects the physics or score. */
@@ -136,7 +148,7 @@ type Run = {
   // so a second run started after climbing high in the first one rendered the Friend far below the visible
   // canvas — invisible, camera stuck at the previous run's height. Keeping them here fixes that at the root:
   // a fresh Run means a fresh camera, exactly like a fresh tower and a fresh score.
-  cameraHeight: number; particles: Particle[];
+  cameraHeight: number; particles: Particle[]; popups: Popup[]; starFlash: number;
 };
 
 export default function FriendClimb({ friendId, client, paused }: GameComponentProps) {
@@ -152,6 +164,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
   const [best, setBest] = useState<Record<number, number>>({}); // this session only; see the disclaimer in the menu
   const [ghosts, setGhosts] = useState<readonly RunRecord[]>([]); // this session's own past runs, newest first
   const [lastScore, setLastScore] = useState(0), [lastCode, setLastCode] = useState("");
+  const [lastHeightPoints, setLastHeightPoints] = useState(0), [lastStars, setLastStars] = useState(0);
   const [importCode, setImportCode] = useState(""), [importError, setImportError] = useState("");
   const [importedGhost, setImportedGhost] = useState<RunRecord | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
@@ -168,6 +181,8 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
 
   const dirRef = useRef<Dir>(0), heldKeys = useRef(new Set<string>()), heldPointer = useRef<Dir | null>(null);
   const runRef = useRef<Run | null>(null);
+  const playedBefore = useRef(false); // for the "land on a star" hint, shown only during the session's first run
+  const [isFirstRun, setIsFirstRun] = useState(true);
   const stop = () => { heldKeys.current.clear(); heldPointer.current = null; dirRef.current = 0; };
 
   function startGame(nextSeed: number) {
@@ -178,14 +193,16 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     const own = sameTower.slice(0, 3).map((run, index) => makeGhost(`run ${index + 1}`, "rgba(255,255,255,0.3)", tower, run.transitions));
     const bot = makeGhost("bot", "rgba(255,255,255,0.55)", tower, botRun(nextSeed).transitions);
     const imported = importedGhost && importedGhost.seed === nextSeed ? makeGhost("friend's code", "rgba(204,255,0,0.6)", tower, importedGhost.transitions) : null;
-    runRef.current = { tower, state: startRun(), transitions: [], lastDir: 0, bot, own, imported, cameraHeight: 0, particles: [] };
+    runRef.current = { tower, state: startRun(), transitions: [], lastDir: 0, bot, own, imported, cameraHeight: 0, particles: [], popups: [], starFlash: 0 };
+    setIsFirstRun(!playedBefore.current); playedBefore.current = true;
     setSeed(nextSeed); setImportError(""); setScreen("play");
   }
-  function endGame(score: number) {
-    const transitions = runRef.current?.transitions ?? [];
+  function endGame(state: RunState) {
+    const score = scoreOf(state), transitions = runRef.current?.transitions ?? [];
     setGhosts(previous => [{ seed, transitions, score }, ...previous].slice(0, 12));
     setBest(previous => ({ ...previous, [seed]: Math.max(previous[seed] ?? 0, score) }));
-    setLastScore(score); setLastCode(encodeRun(seed, transitions, score)); setCopyFailed(false); setScreen("result");
+    setLastScore(score); setLastHeightPoints(Math.floor(state.peakHeight / HEIGHT_PER_POINT)); setLastStars(state.stars);
+    setLastCode(encodeRun(seed, transitions, score)); setCopyFailed(false); setScreen("result");
   }
 
   // One continuous render loop for the whole component's life: the canvas stays mounted across every screen so
@@ -225,11 +242,15 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             }
             if (run.state.stars > previousStars) {
               sound.current?.play("reward");
-              if (!live.current.reducedMotion) spawnBurst(run.particles, run.state.x, run.state.height + 10, NEON, 10);
+              if (!live.current.reducedMotion) {
+                run.popups.push({ x: run.state.x, y: run.state.height + 50, life: 0.9, text: `+${STAR_POINTS}` });
+                spawnBurst(run.particles, run.state.x, run.state.height + 10, NEON, 10);
+                run.starFlash = 1;
+              }
             }
             if (!run.state.alive) sound.current?.play("impact", { volume: 0.7 });
           }
-          if (!run.state.alive) endGame(scoreOf(run.state));
+          if (!run.state.alive) endGame(run.state);
         }
         if (run) {
           // The bug this replaces: cameraHeight snapped straight to (height - CAMERA_ANCHOR) every frame while
@@ -252,9 +273,9 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
           // ground skyline that fades out as the camera climbs away from it. Reduced motion skips both: a
           // still dark lane reads just as clearly and this is the only truly optional layer per frame.
           const topHeight = run.cameraHeight + VIEW.height - CAMERA_ANCHOR, bottomHeight = run.cameraHeight - CAMERA_ANCHOR;
-          ctx.fillStyle = "#fff";
+          ctx.fillStyle = "#fff"; ctx.globalAlpha = 0.5;
           for (const star of starsBetween(topHeight, bottomHeight)) {
-            const y = toScreenY(star.y); ctx.globalAlpha = 0.5; ctx.fillRect(LANE_MARGIN + star.x, y, star.size, star.size);
+            const y = toScreenY(star.y); starPath(ctx, LANE_MARGIN + star.x, y, star.size * 1.6, star.size * 0.7); ctx.fill();
           }
           ctx.globalAlpha = 1;
           const skylineFade = Math.max(0, 1 - run.cameraHeight / 900);
@@ -292,8 +313,8 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             ctx.beginPath(); ctx.roundRect(left, y - 6, platform.width, 10, 4); ctx.fill(); ctx.stroke();
             if (platform.star) {
               if (motion) ctx.drawImage(glowDot, LANE_MARGIN + platform.x - 16, y - 32, 32, 32);
-              ctx.fillStyle = NEON; ctx.strokeStyle = "#000";
-              ctx.beginPath(); ctx.arc(LANE_MARGIN + platform.x, y - 16, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+              ctx.fillStyle = NEON; ctx.strokeStyle = "#000"; ctx.lineWidth = 1.5;
+              starPath(ctx, LANE_MARGIN + platform.x, y - 16, 8, 3.5); ctx.fill(); ctx.stroke();
             }
           });
           for (const ghost of [run.bot, run.imported, ...run.own].filter((value): value is Ghost => Boolean(value))) {
@@ -316,6 +337,13 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
               ctx.drawImage(glowDot, LANE_MARGIN + particle.x - size / 2, toScreenY(particle.y) - size / 2, size, size);
             }
             ctx.globalAlpha = 1;
+            if (run.starFlash > 0) {
+              run.starFlash = Math.max(0, run.starFlash - dt / 0.3);
+              const flashSize = 90 * (1.4 - run.starFlash);
+              ctx.globalAlpha = run.starFlash * 0.8;
+              ctx.drawImage(glowDot, LANE_MARGIN + run.state.x - flashSize / 2, toScreenY(run.state.height) - flashSize / 2, flashSize, flashSize);
+              ctx.globalAlpha = 1;
+            }
           }
           const stretch = motion ? Math.max(0.78, Math.min(1.22, 1 + run.state.vy / 2600)) : 1;
           const facing = run.lastDir === -1 ? "left" : "right";
@@ -329,12 +357,22 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             ctx.drawImage(sprite, -half, 0);
             ctx.restore();
           }
+          if (motion) {
+            for (let index = run.popups.length - 1; index >= 0; index--) {
+              const popup = run.popups[index]; popup.life -= dt; popup.y += 40 * dt;
+              if (popup.life <= 0) { run.popups.splice(index, 1); continue; }
+              ctx.globalAlpha = Math.min(1, popup.life / 0.3); ctx.fillStyle = NEON;
+              ctx.font = "bold 16px monospace"; ctx.textAlign = "center";
+              ctx.fillText(popup.text, LANE_MARGIN + popup.x, toScreenY(popup.y));
+              ctx.globalAlpha = 1;
+            }
+          }
         }
         // ~10 updates/second is plenty for a number that only needs to look alive, and far cheaper than a
         // React re-render on every one of these (up to 60/second).
         if (heightLabel.current && now - lastHudUpdate > 100) {
           lastHudUpdate = now;
-          heightLabel.current.textContent = `Height ${run ? Math.floor(run.state.height / 10) : 0}`;
+          heightLabel.current.textContent = `Height ${run ? Math.floor(run.state.height / 10) : 0} · ★${run ? run.state.stars : 0}`;
         }
         node.dataset.x = run ? run.state.x.toFixed(1) : "";
         node.dataset.height = run ? run.state.height.toFixed(1) : "0";
@@ -392,6 +430,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
           const rect = event.currentTarget.getBoundingClientRect();
           heldPointer.current = (event.clientX - rect.left) / rect.width < 0.5 ? -1 : 1; }}
         onPointerUp={() => { heldPointer.current = null; }} onPointerCancel={() => { heldPointer.current = null; }} />
+      {screen === "play" && !status && isFirstRun && <p className="fc-hint fc-star-hint">Land on a star for +{STAR_POINTS}</p>}
       {screen === "play" && !status && <p className="fc-hint"><span className="fc-desktop-controls">Arrow keys or A/D · </span>Hold either side of the tower</p>}
     </div>
 
@@ -401,7 +440,8 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     {!status && screen === "pick" && <div className="fc-pick">
       <h1>Friend Climb</h1>
       <p>Your Friend bounces up a tower on its own; you only steer left and right. The lane wraps — walk off one
-        side and you reappear on the other. Reach for stars, watch the ghosts, and see how high you get.</p>
+        side and you reappear on the other. Watch the ghosts, and see how high you get.</p>
+      <p>Land on a star for +{STAR_POINTS}.</p>
       <button type="button" disabled={paused} onClick={() => startGame(todaySeed())}>Tower of the day</button>
       <button type="button" disabled={paused} onClick={() => startGame(randomSeed())}>Practice (new tower)</button>
       <p className="fc-note">Progress and ghosts last only for this open session — closing or reloading the page clears them. There is no save yet.</p>
@@ -416,6 +456,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
 
     {!status && screen === "result" && <div className="fc-result">
       <h1>Score: {lastScore}</h1>
+      <p>Height {lastHeightPoints} + {lastStars} star{lastStars === 1 ? "" : "s"} ({lastStars * STAR_POINTS}) = {lastScore}</p>
       <p>Best this session on this tower: {best[seed] ?? lastScore}. Progress resets when this page reloads.</p>
       <button type="button" disabled={paused} onClick={() => startGame(seed)}>Play this tower again</button>
       <button type="button" disabled={paused} onClick={() => setScreen("pick")}>Back</button>

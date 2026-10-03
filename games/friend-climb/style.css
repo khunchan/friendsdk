@@ -15,6 +15,7 @@
 .fc-scene canvas{display:block;max-width:100%;max-height:100%;image-rendering:pixelated}
 /* The SDK toolbar overlays the bottom-left and bottom-right corners of the frame; this stays clear of it. */
 .fc-hint{position:absolute;bottom:54px;left:16px;right:16px;margin:0;text-align:center;font-size:11px;pointer-events:none}
+.fc-star-hint{bottom:72px;color:#ccff00}
 /* justify-content:flex-start (not center) plus generous bottom padding, so tall content never lands under
    the SDK's toolbar, which always overlays the bottom-left and bottom-right corners of the frame. */
 .fc-status,.fc-pick,.fc-result{position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:flex-start;background:#fff;text-align:center;padding:24px 24px 90px;overflow:auto}
@@ -30,6 +31,7 @@
   .fc-top button{padding:4px 6px;min-height:0;white-space:nowrap}
   .fc-top span{padding:4px 6px;white-space:nowrap}
   .fc-hint{bottom:42px;font-size:10px}
+  .fc-star-hint{bottom:56px}
   .fc-desktop-controls{display:none}
   .fc-pick,.fc-result{padding:14px 14px 80px;gap:10px}
   .fc-status{padding:14px;gap:10px}

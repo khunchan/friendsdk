@@ -114,7 +114,17 @@ try {
     await child.getByRole('heading', { name: /^Score: \d+$/ }).waitFor({ timeout: 20000 });
     await page.keyboard.up('ArrowLeft');
     const scoreText = await child.getByRole('heading', { name: /^Score: \d+$/ }).textContent();
-    assert(Number(scoreText.replace('Score: ', '')) > 0, 'A real run scored above zero');
+    const score = Number(scoreText.replace('Score: ', ''));
+    assert(score > 0, 'A real run scored above zero');
+    // The score breakdown (height points + stars × 25 = total) must add up, whether or not this particular
+    // short run happened to land on a star — proves the breakdown line itself is wired correctly either way.
+    const breakdown = await child.locator('.fc-result p').first().textContent();
+    const parsed = breakdown.match(/^Height (\d+) \+ (\d+) stars? \((\d+)\) = (\d+)$/);
+    assert(parsed, `the score breakdown line did not match the expected shape (got "${breakdown}")`);
+    const [, heightPoints, starCount, starPoints, total] = parsed.map(Number);
+    assert.equal(starPoints, starCount * 25, 'star points must be the star count times 25');
+    assert.equal(total, heightPoints + starPoints, 'the breakdown must add up to the total');
+    assert.equal(total, score, 'the breakdown total must match the score heading');
     const code = await child.getByLabel('Run code to share').inputValue();
     assert.match(code, /^FC1\.[0-9a-z]+\.[0-9a-zLNR]*![0-9a-z]+$/, 'The shared run code has the expected shape');
     await assertBounds(page); await gameBounds(child);
@@ -127,7 +137,7 @@ try {
     // A second run must start with the Friend visible again, not scrolled off by a stale camera left over
     // from how high the first run climbed (the bug the builder found and fixed after playtesting).
     await child.getByRole('button', { name: 'Play this tower again' }).click();
-    await child.getByText('Height 0', { exact: true }).waitFor();
+    await child.getByText(/^Height 0 /).waitFor();
     await page.waitForTimeout(150);
     const playerY = Number(await canvas.getAttribute('data-player-screen-y'));
     assert(playerY >= 0 && playerY <= 640, `The Friend must render inside the canvas on a second run (got screen y ${playerY})`);
@@ -142,12 +152,17 @@ try {
         assert(s.y >= 640 * 0.15 && s.y <= 640 * 0.75,
           `at t=${s.t}ms the Friend's screen y (${s.y.toFixed(1)}) left the 15%-75% band — the camera lost it`);
         // A brief dip just below the spawn height is normal play, not a bug, so a leading "-" is allowed.
-        assert.match(s.hud, /^Height -?\d+$/, `at t=${s.t}ms the HUD did not read "Height N" (got "${s.hud}")`);
+        assert.match(s.hud, /^Height -?\d+ · ★\d+$/, `at t=${s.t}ms the HUD did not read "Height N · ★S" (got "${s.hud}")`);
       }
-      const heights = samples.map(s => Number(s.hud.replace('Height ', '')));
+      const heights = samples.map(s => Number(s.hud.match(/^Height (-?\d+)/)[1]));
       assert(heights.some((h, i) => i > 0 && h > heights[i - 1]), 'the HUD height must visibly change between samples, not sit frozen at "Height 0"');
       assert(heights[heights.length - 1] > heights[0], `the HUD height must grow over the climb (${heights[0]} → ${heights[heights.length - 1]})`);
       assert(samples[samples.length - 1].height > 50, `expected real height after 22s of bot-driven climbing, got ${samples[samples.length - 1].height}`);
+      // Not asserting a star was actually collected here: real-time keyboard dispatch cannot land on the
+      // exact same ticks tower.ts's own pure simulation would (browser/event-loop timing drifts a little from
+      // the Date.now() estimate driveAndWatchCamera uses), so it can genuinely climb a different path than
+      // the recorded bot moves alone would — the "★N" pattern above already proves the counter is live and
+      // well-formed throughout; a guaranteed collection is checked deterministically below instead.
     }
 
     // event.code (the physical key), not event.key (the typed character), must drive steering — this is
