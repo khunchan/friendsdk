@@ -13,7 +13,15 @@ export const HORIZONTAL_ACCEL = 900; // px/s^2 while a direction is held
 export const HORIZONTAL_DRAG = 700; // px/s^2 slowdown while no direction is held
 export const PLAYER_RADIUS = 14;
 export const WORLD_WIDTH = 300; // the tower lane; the Friend's x stays within [PLAYER_RADIUS, WORLD_WIDTH - PLAYER_RADIUS]
-export const FALL_MARGIN = 260; // how far below the highest point reached the camera lets the Friend fall before the run ends
+export const FALL_MARGIN = 260; // how far below the highest point reached the Friend may fall before the run ends
+/** How many world-units tall the renderer's viewport is, fixed regardless of the actual screen's aspect ratio
+ * or pixel size — every player sees the same slice of the tower no matter their device, a fairness
+ * requirement for any future tournament (see index.tsx's ResizeObserver, which only ever varies the *width*
+ * it renders, never this). The renderer derives its camera anchor from this and FALL_MARGIN together
+ * (CAMERA_ANCHOR = REFERENCE_HEIGHT - FALL_MARGIN) so the screen's bottom edge and the death boundary above
+ * are tied by one fixed formula instead of two independently-tuned constants that could drift apart —
+ * tower.test.mjs checks that they line up exactly, every tick, not just approximately. */
+export const REFERENCE_HEIGHT = 640;
 export const HEIGHT_PER_POINT = 10;
 export const STAR_POINTS = 25;
 /** A rare platform that launches the Friend far higher than a normal landing — strictly a bonus: generation

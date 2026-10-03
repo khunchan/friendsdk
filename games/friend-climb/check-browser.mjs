@@ -118,9 +118,30 @@ try {
     await child.getByRole('button', { name: 'Practice (new tower)' }).click();
     const canvas = child.locator('canvas');
     await canvas.waitFor(); await canvas.focus();
+    // The backing-store height is the world's vertical field of view in world-units (tower.ts's
+    // REFERENCE_HEIGHT), fixed regardless of the frame's actual width — every player sees the same slice of
+    // the tower on any screen, a fairness requirement for any future tournament. Checked at both 1100px and
+    // 360px since this loop runs the whole check at both.
+    assert.equal(await canvas.evaluate(el => el.height), 640,
+      `the visible world height must stay fixed regardless of screen width (checked at ${width}px)`);
     await page.keyboard.down('ArrowLeft');
-    await child.getByRole('heading', { name: /^Score: \d+$/ }).waitFor({ timeout: 20000 });
+    // Poll tightly (not the half-second cadence used elsewhere in this file) through the real descent to
+    // death, tracking the worst (highest) screen y the Friend was rendered at while the canvas still called
+    // itself "play". With the camera tied to FALL_MARGIN by one fixed formula (no smoothing lag), death
+    // happens essentially exactly at the visible bottom edge (640) — tower.test.mjs proves this exactly with
+    // pure math; this proves the real renderer, through real frame timing, never visibly strays far past it
+    // before the run actually ends.
+    let maxScreenYWhilePlaying = -Infinity;
+    while (await canvas.getAttribute('data-screen') === 'play') {
+      const screenY = Number(await canvas.getAttribute('data-player-screen-y'));
+      if (!Number.isNaN(screenY)) maxScreenYWhilePlaying = Math.max(maxScreenYWhilePlaying, screenY);
+      await page.waitForTimeout(16);
+    }
     await page.keyboard.up('ArrowLeft');
+    assert(maxScreenYWhilePlaying > 0, 'never sampled a player screen position before death');
+    assert(maxScreenYWhilePlaying < 640 + 80,
+      `the Friend's screen y reached ${maxScreenYWhilePlaying.toFixed(1)} while still marked "play" — the camera showed it well past the visible bottom edge before the run actually ended`);
+    await child.getByRole('heading', { name: /^Score: \d+$/ }).waitFor({ timeout: 20000 });
     const scoreText = await child.getByRole('heading', { name: /^Score: \d+$/ }).textContent();
     const score = Number(scoreText.replace('Score: ', ''));
     assert(score > 0, 'A real run scored above zero');
@@ -158,9 +179,13 @@ try {
       const botMoves = tower.botRun(1500, 60 * 180).transitions;
       const samples = await driveAndWatchCamera(page, canvas, botMoves, 22);
       assert(samples.length >= 40, `expected roughly 44 half-second samples over 22s, got ${samples.length}`);
+      // With the camera pinned to peakHeight (no smoothing) and CAMERA_ANCHOR = REFERENCE_HEIGHT - FALL_MARGIN,
+      // height <= peakHeight always keeps screen y >= CAMERA_ANCHOR, and alive (height >= peakHeight -
+      // FALL_MARGIN) always keeps it <= REFERENCE_HEIGHT — an exact pair of bounds, not a heuristic band.
+      const cameraAnchor = tower.REFERENCE_HEIGHT - tower.FALL_MARGIN;
       for (const s of samples) {
-        assert(s.y >= 640 * 0.15 && s.y <= 640 * 0.75,
-          `at t=${s.t}ms the Friend's screen y (${s.y.toFixed(1)}) left the 15%-75% band — the camera lost it`);
+        assert(s.y >= cameraAnchor - 5 && s.y <= tower.REFERENCE_HEIGHT + 5,
+          `at t=${s.t}ms the Friend's screen y (${s.y.toFixed(1)}) left the [${cameraAnchor}, ${tower.REFERENCE_HEIGHT}] band the camera guarantees`);
         // Score is floor(peakHeight / 10) + starPoints; peakHeight never decreases, so score never goes negative.
         assert.match(s.hud, /^Score \d+ · ★\d+$/, `at t=${s.t}ms the HUD did not read "Score N · ★S" (got "${s.hud}")`);
       }

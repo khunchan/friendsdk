@@ -8,27 +8,28 @@ import { createFriendSoundKit, type FriendSoundKit } from "@rarefriends/friendsd
 import "@rarefriends/friendsdk/frame.css";
 import "./style.css";
 import {
-  DT, WORLD_WIDTH, PLAYER_RADIUS, HEIGHT_PER_POINT, STAR_POINTS,
+  DT, WORLD_WIDTH, PLAYER_RADIUS, HEIGHT_PER_POINT, STAR_POINTS, FALL_MARGIN, REFERENCE_HEIGHT,
   type Dir, type Tower, type RunState, type Transition,
   seedForDate, generateTower, startRun, step, scoreOf, botRun, encodeRun, decodeRun,
 } from "./tower";
 
 // The canvas's backing store always matches the SDK frame's actual CSS aspect ratio exactly (see the
 // ResizeObserver below) — the whole point is that there is never a gap on any side to letterbox. Only the
-// width varies by frame shape; the height stays fixed at this reference so the *amount* of tower visible,
-// the camera and the physics constants tuned against it never depend on the screen size.
-const REFERENCE_HEIGHT = 640;
-// Between two platforms the Friend's real height naturally dips below the last peak by as much as FALL_MARGIN
-// (losing more than that ends the run) before the next bounce resets it — so the anchor needs that much room
-// below it on screen, not just room above it for the camera's climb lag, or an ordinary mid-run dip pushes the
-// Friend toward the bottom edge even though nothing is wrong.
-const CAMERA_ANCHOR = REFERENCE_HEIGHT * 0.34;
-/** How quickly the camera's world-height reference catches up to the Friend's highest point. Exponential
- * smoothing: with a constant climb speed v, the camera settles to a steady lag of v / CAMERA_CATCH_UP_RATE
- * world units behind the peak. The fastest sustained climb measured in tower.test.mjs's bot runs is well
- * under 400 units/s, so this keeps the lag under roughly 100px — nowhere near falling off the top of a
- * 640px-tall view. See the render loop for the one line that actually applies it. */
-const CAMERA_CATCH_UP_RATE = 4;
+// width varies by frame shape; the height stays fixed at REFERENCE_HEIGHT (imported from tower.ts) so the
+// *amount* of tower visible, the camera and the physics constants tuned against it never depend on the
+// screen size — every player sees the same vertical slice of the tower, a fairness requirement for any
+// future tournament.
+//
+// The camera's own world-height reference is pinned to the run's own peakHeight every frame — never
+// smoothed or lagged — and this anchor is derived directly from FALL_MARGIN so the screen's bottom edge
+// always lines up exactly with the death boundary tower.ts enforces: at height == peakHeight - FALL_MARGIN,
+// CAMERA_ANCHOR - (height - peakHeight) == CAMERA_ANCHOR + FALL_MARGIN == REFERENCE_HEIGHT, the very bottom
+// row of the canvas, every tick, not just approximately (tower.test.mjs proves this algebraically). A
+// previous version eased the camera toward the peak with an exponential lag purely for a smoother look, but
+// that lag floated relative to FALL_MARGIN depending on climb speed — a platform still visible on screen
+// could already be past the death line. Any future easing must stay out of this value and apply only to
+// purely decorative effects (squash/stretch, particles), never to what toScreenY uses.
+const CAMERA_ANCHOR = REFERENCE_HEIGHT - FALL_MARGIN;
 /** The whole scene stays inside this three-color palette: black, white and Rare Friends' signal green. */
 const NEON = "#ccff00";
 const todaySeed = () => seedForDate(new Date().toISOString().slice(0, 10));
@@ -171,11 +172,12 @@ const ZONE_BACKGROUNDS: readonly string[] = ["#060606", "#06090a", "#060a07", "#
 
 type Run = {
   tower: Tower; state: RunState; transitions: Transition[]; lastDir: Dir; bot: Ghost; own: Ghost[]; imported: Ghost | null;
-  // Per-run camera/particle state. These used to live outside the Run object and never reset between games,
-  // so a second run started after climbing high in the first one rendered the Friend far below the visible
-  // canvas — invisible, camera stuck at the previous run's height. Keeping them here fixes that at the root:
-  // a fresh Run means a fresh camera, exactly like a fresh tower and a fresh score.
-  cameraHeight: number; particles: Particle[]; popups: Popup[]; starFlash: number;
+  // Per-run particle state. This used to live outside the Run object and never reset between games, so a
+  // second run started after climbing high in the first one rendered the Friend far below the visible
+  // canvas — invisible, camera stuck at the previous run's height. Keeping it here fixes that at the root:
+  // a fresh Run means a fresh camera, exactly like a fresh tower and a fresh score. (There is no separate
+  // cameraHeight field: the camera is state.peakHeight directly, every frame — see CAMERA_ANCHOR above.)
+  particles: Particle[]; popups: Popup[]; starFlash: number;
   // Highest milestone zone (height-points / MILESTONE_STEP, floored) already announced, plus how long its
   // banner still has left to show; both purely presentational, derived from state.peakHeight, never fed back.
   milestoneZone: number; milestoneFlash: number;
@@ -229,7 +231,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     const own = sameTower.slice(0, 3).map((run, index) => makeGhost(`run ${index + 1}`, "rgba(255,255,255,0.3)", tower, run.transitions));
     const bot = makeGhost("bot", "rgba(255,255,255,0.55)", tower, botRun(nextSeed).transitions);
     const imported = importedGhost && importedGhost.seed === nextSeed ? makeGhost("friend's code", "rgba(204,255,0,0.6)", tower, importedGhost.transitions) : null;
-    runRef.current = { tower, state: startRun(), transitions: [], lastDir: 0, bot, own, imported, cameraHeight: 0, particles: [], popups: [], starFlash: 0, milestoneZone: 0, milestoneFlash: 0 };
+    runRef.current = { tower, state: startRun(), transitions: [], lastDir: 0, bot, own, imported, particles: [], popups: [], starFlash: 0, milestoneZone: 0, milestoneFlash: 0 };
     setIsFirstRun(!playedBefore.current); playedBefore.current = true;
     setSeed(nextSeed); setImportError(""); setScreen("play");
   }
@@ -314,17 +316,11 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
           }
           if (!run.state.alive) endGame(run.state);
         }
-        if (run) {
-          // The bug this replaces: cameraHeight snapped straight to (height - CAMERA_ANCHOR) every frame while
-          // climbing, which substituted into toScreenY below to exactly 0 — the Friend was pinned to the very
-          // top pixel of the canvas on every new peak, not held at the anchor. Easing toward run.state.peakHeight
-          // itself (tower.ts's own monotonic high-water mark, already proven never to decrease) fixes both: the
-          // Friend now settles AT the anchor with a smooth lag instead of snapping past it, and because the
-          // target never decreases, neither does cameraHeight — falling never pulls the camera back down.
-          const catchUp = 1 - Math.exp(-CAMERA_CATCH_UP_RATE * dt);
-          run.cameraHeight += (run.state.peakHeight - run.cameraHeight) * catchUp;
-        }
-        const toScreenY = (height: number) => CAMERA_ANCHOR - (height - (run?.cameraHeight ?? 0));
+        // The camera's world-height reference is the run's own peakHeight, read directly every frame — no
+        // easing, no lag. peakHeight only ever increases (tower.ts's own monotonic high-water mark), so this
+        // is already smooth during a climb and simply holds still while falling; see CAMERA_ANCHOR's comment
+        // above for why only this exact, undamped formula keeps the screen's bottom edge on the death line.
+        const toScreenY = (height: number) => CAMERA_ANCHOR - (height - (run?.state.peakHeight ?? 0));
 
         const motion = !live.current.reducedMotion;
         ctx.clearRect(0, 0, VIEW.width, VIEW.height);
@@ -335,13 +331,13 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
           // Parallax: a stable, deterministic star field (never re-randomized — see starsBetween) plus a
           // ground skyline that fades out as the camera climbs away from it. Reduced motion skips both: a
           // still dark lane reads just as clearly and this is the only truly optional layer per frame.
-          const topHeight = run.cameraHeight + VIEW.height - CAMERA_ANCHOR, bottomHeight = run.cameraHeight - CAMERA_ANCHOR;
+          const topHeight = run.state.peakHeight + VIEW.height - CAMERA_ANCHOR, bottomHeight = run.state.peakHeight - CAMERA_ANCHOR;
           ctx.fillStyle = "#fff"; ctx.globalAlpha = 0.5;
           for (const star of starsBetween(topHeight, bottomHeight, VIEW.width)) {
             const y = toScreenY(star.y); starPath(ctx, star.x, y, star.size * 1.6, star.size * 0.7); ctx.fill();
           }
           ctx.globalAlpha = 1;
-          const skylineFade = Math.max(0, 1 - run.cameraHeight / 900);
+          const skylineFade = Math.max(0, 1 - run.state.peakHeight / 900);
           if (skylineFade > 0.02) {
             ctx.globalAlpha = skylineFade * 0.8; ctx.fillStyle = "#0e140a";
             drawSkyline(ctx, toScreenY, VIEW.width);
@@ -462,6 +458,18 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             ctx.globalAlpha = 1;
             run.milestoneFlash = Math.max(0, run.milestoneFlash - dt / 1.4);
           }
+          // The death boundary itself: with CAMERA_ANCHOR derived from FALL_MARGIN above, height ==
+          // peakHeight - FALL_MARGIN always maps to exactly VIEW.height (REFERENCE_HEIGHT) — the very bottom
+          // row of the canvas — so this fixed-position band IS the death line, not an approximation of one.
+          // Low opacity and drawn on top: it tints the danger zone without hiding a platform or the Friend
+          // standing in it, which is exactly when seeing them clearly matters most.
+          const fogHeight = 70;
+          const fog = ctx.createLinearGradient(0, VIEW.height - fogHeight, 0, VIEW.height);
+          fog.addColorStop(0, "rgba(6,6,6,0)"); fog.addColorStop(1, "rgba(6,6,6,0.55)");
+          ctx.fillStyle = fog; ctx.fillRect(0, VIEW.height - fogHeight, VIEW.width, fogHeight);
+          ctx.strokeStyle = NEON; ctx.globalAlpha = 0.7; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(0, VIEW.height - 2); ctx.lineTo(VIEW.width, VIEW.height - 2); ctx.stroke();
+          ctx.globalAlpha = 1;
         }
         // ~10 updates/second is plenty for a number that only needs to look alive, and far cheaper than a
         // React re-render on every one of these (up to 60/second).

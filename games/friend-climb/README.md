@@ -37,6 +37,28 @@ by the next plain landing. Every 100 height-points you reach for the first time 
 milestone banner and a subtle background tint shift — purely a progress cue, never fed back into the physics
 or the score.
 
+## The camera and the death boundary
+
+The visible world is always exactly `REFERENCE_HEIGHT` (640) world-units tall, regardless of the actual
+screen's size or aspect ratio — only the *width* rendered varies with the frame's shape (see the
+ResizeObserver in `index.tsx`), so every player sees the same vertical slice of the tower no matter their
+device, a fairness requirement for any future tournament.
+
+The camera's vertical reference is the run's own `peakHeight` (tower.ts's monotonic high-water mark), read
+directly every frame with no smoothing or lag, and the screen's anchor point is derived from
+`FALL_MARGIN` by one fixed formula: `CAMERA_ANCHOR = REFERENCE_HEIGHT - FALL_MARGIN`. Algebraically, this
+makes `height == peakHeight - FALL_MARGIN` (the exact death boundary) always map to `REFERENCE_HEIGHT`, the
+very bottom row of the canvas — every tick, not approximately. A thin green line and a soft fog mark that
+row on screen. `tower.test.mjs` proves this alignment exactly with pure math; `check-browser.mjs` checks the
+real renderer never visibly strays far past it before a run actually ends, at both 1100px and 360px.
+
+An earlier version eased the camera toward the peak with an exponential lag, purely for a smoother look. That
+lag floated relative to `FALL_MARGIN` depending on climb speed, so a platform that was still clearly visible
+on screen could already be past the real death line — the Friend would die landing on something the player
+could still see. Removing the lag from the camera's gameplay-critical position (keeping any future easing
+strictly to decorative effects, never to `toScreenY`) fixes this at the root instead of papering over it with
+a wider margin.
+
 ## Towers, physics and determinism
 
 A tower is generated entirely from one 32-bit seed: platform positions, widths, which ones break, where the
@@ -94,11 +116,11 @@ rate — `tower.test.mjs` checks this too. That determinism is also what makes t
 
 ## Checks
 
-Run on 2026-10-03 with SDK v0.1.4 and Node.js 22, from the SDK root:
+Run on 2026-10-04 with SDK v0.1.4 and Node.js 22, from the SDK root:
 
 | Command | Result |
 | --- | --- |
-| `node --test games/friend-climb/tower.test.mjs` | 15 tests: replay, encode/decode, run-code version rejection, reachability, tower safety, springs, combo, the bot, scoring |
+| `node --test games/friend-climb/tower.test.mjs` | 16 tests: replay, encode/decode, run-code version rejection, reachability, tower safety, camera/death-boundary alignment, springs, combo, the bot, scoring |
 | `node scripts/dev-game.mjs check games/friend-climb` (`friendsdk check`) | game definition and build |
 | `node scripts/dev-game.mjs test games/friend-climb` (`friendsdk test`) | the SDK's automated browser check with its mock wallet |
 | `node games/friend-climb/check-browser.mjs` | this game's own browser check at 1100 px and 360 px |

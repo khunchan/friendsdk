@@ -96,6 +96,39 @@ test("every platform gap and sideways drift stays within what one bounce can cle
   }
 });
 
+test("the screen's bottom edge lines up exactly with the FALL_MARGIN death boundary, every tick", () => {
+  // Mirrors index.tsx's camera formula exactly: CAMERA_ANCHOR = REFERENCE_HEIGHT - FALL_MARGIN, with the
+  // camera's own world-height reference pinned to the run's own peakHeight every frame (no smoothing) — so
+  // the two numbers are tied by one fixed formula, not two independently-tuned constants that could drift
+  // apart the way they used to (a platform still visible on screen could already be past the death line).
+  const CAMERA_ANCHOR = tower.REFERENCE_HEIGHT - tower.FALL_MARGIN;
+  const screenY = (height, peakHeight) => CAMERA_ANCHOR - (height - peakHeight);
+  // The most a single 1/60s physics tick can carry the Friend past the boundary: falling the entire
+  // FALL_MARGIN distance from a dead stop at the peak reaches sqrt(2 * GRAVITY * FALL_MARGIN) px/s, times one
+  // tick's duration, plus slack for the peak itself not landing exactly on a tick boundary.
+  const maxOvershootPerTick = Math.sqrt(2 * tower.GRAVITY * tower.FALL_MARGIN) * tower.DT + 15;
+  for (let seed = 1; seed <= 30; seed++) {
+    const towerData = tower.generateTower(seed);
+    const random = tower.seeded(seed * 97 + 11);
+    let state = tower.startRun(), dir = 0, diedAt = null;
+    for (let tick = 0; tick < 60 * 180 && state.alive; tick++) {
+      if (tick % 30 === 0) dir = [-1, 0, 1][Math.floor(random() * 3)];
+      // Every alive frame's own height must still map to on-screen or exactly at the edge — the direct
+      // statement of "a platform I can see and land on never kills me".
+      assert(screenY(state.height, state.peakHeight) <= tower.REFERENCE_HEIGHT + 1e-6,
+        `seed ${seed}, tick ${tick}: an alive frame is already below the visible bottom edge`);
+      const previous = state;
+      state = tower.step(towerData, state, dir);
+      if (!state.alive) diedAt = { before: previous, after: state };
+    }
+    assert(diedAt, `seed ${seed}: never died within the tick limit — this scenario did not exercise death`);
+    const overshoot = screenY(diedAt.after.height, diedAt.after.peakHeight) - tower.REFERENCE_HEIGHT;
+    assert(overshoot > 0, `seed ${seed}: the tick that ends the run is not actually below the bottom edge`);
+    assert(overshoot < maxOvershootPerTick,
+      `seed ${seed}: death landed ${overshoot.toFixed(1)}px past the bottom edge, further than one tick of falling can explain`);
+  }
+});
+
 test("different seeds generate different towers", () => {
   const a = tower.generateTower(1), b = tower.generateTower(2);
   assert.notDeepEqual(a.platforms.slice(0, 10), b.platforms.slice(0, 10));
