@@ -27,6 +27,12 @@ Your Friend bounces automatically; you are only steering sideways. Land on platf
 cracked platform (white fill) breaks after one bounce. Collect stars for bonus points. Falling more than one
 screen below your highest point ends the run.
 
+The keyboard works the instant a run starts — after clicking "Tower of the day"/"Practice", or after starting
+either one with Enter/Space while it's focused — without first clicking anywhere on the game itself. Steering
+is listened on the game's own document, not just the canvas, specifically so it keeps working even if focus
+ends up somewhere else entirely; the canvas is still focused automatically on start too, for touch/assistive
+tech and so its own aria-label gets announced.
+
 Settings has reduced motion (turns off landing squash-and-stretch and sparks; never changes the physics or
 score) and a Sound button (a landing thud and a star chime, off by default).
 

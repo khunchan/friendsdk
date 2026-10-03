@@ -510,9 +510,25 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
       frame = requestAnimationFrame(render);
     }).catch(() => { if (!cancelled) { setFailed(true); setStatus("Your Friend's artwork could not load. Check your connection and retry."); } });
     window.addEventListener("blur", stop); document.addEventListener("visibilitychange", stop);
+    // Listened on the game's own document, not just the canvas: a keypress right after clicking "Tower of
+    // the day"/"Practice" used to do nothing until the player also clicked the canvas itself, since only the
+    // canvas's own onKeyDown ever saw the event. Gated on the same conditions as sceneBlocked (via the live
+    // ref, so it always reads the current values, not whatever was true when this effect first ran) so a
+    // keypress is never captured while a menu is open or the run isn't actually playing — keyup always goes
+    // through regardless, so a key released while a menu happens to be open can't get stuck held down.
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (live.current.paused || live.current.menu !== null || live.current.screen !== "play") return;
+      // event.code names the physical key, not the character it types, so steering works on any keyboard
+      // layout — on a Cyrillic layout, for instance, the "A"/"D" keys still report "KeyA"/"KeyD".
+      if (["ArrowLeft", "ArrowRight", "KeyA", "KeyD"].includes(event.code)) { event.preventDefault(); heldKeys.current.add(event.code); }
+    };
+    const handleKeyUp = (event: KeyboardEvent) => { heldKeys.current.delete(event.code); };
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("keyup", handleKeyUp);
     return () => {
       cancelled = true; cancelAnimationFrame(frame); stop(); resizeObserver.disconnect();
       window.removeEventListener("blur", stop); document.removeEventListener("visibilitychange", stop);
+      document.removeEventListener("keydown", handleKeyDown); document.removeEventListener("keyup", handleKeyUp);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [friendId, revision]);
@@ -532,6 +548,11 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
   }
 
   const sceneBlocked = paused || menu !== null || screen !== "play" || Boolean(status);
+  // A keypress works without ever clicking the canvas (see the document-level listener above), but focus
+  // still matters for touch/assistive tech and for the canvas's own aria-label to be announced — moving it
+  // here, keyed on sceneBlocked itself, covers both "Tower of the day"/"Practice" (a mouse click) and
+  // starting via Enter/Space on a focused button (keyboard), not just one of the two.
+  useEffect(() => { if (!sceneBlocked) canvas.current?.focus(); }, [sceneBlocked]);
   return <section className="fc-game" aria-label="Friend Climb">
     <div className="fc-top" inert={paused || undefined}>
       {screen === "play" ? <span ref={scoreLabel}>Score 0</span> : <span>Friend Climb</span>}
@@ -546,12 +567,9 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
           to exactly match the frame's actual aspect ratio as soon as it mounts. */}
       <canvas ref={canvas} width={Math.round(REFERENCE_HEIGHT * 0.75)} height={REFERENCE_HEIGHT} tabIndex={sceneBlocked ? -1 : 0}
         aria-label="Climbing tower. Arrow keys or A/D to steer, or hold either side of the tower to steer there."
-        onBlur={stop}
-        // event.code names the physical key, not the character it types, so steering works on any keyboard
-        // layout — on a Cyrillic layout, for instance, the "A"/"D" keys still report "KeyA"/"KeyD".
-        onKeyDown={event => { if (sceneBlocked) return;
-          if (["ArrowLeft", "ArrowRight", "KeyA", "KeyD"].includes(event.code)) { event.preventDefault(); heldKeys.current.add(event.code); } }}
-        onKeyUp={event => heldKeys.current.delete(event.code)}
+        // Keyboard steering is handled on the document itself (see the main effect), not here — focus is
+        // nice to have (see startGame's canvas.current?.focus()) but, unlike before, no longer required for
+        // the keyboard to work, so losing it must not stop the run either.
         onPointerDown={event => { if (sceneBlocked) return; event.preventDefault(); event.currentTarget.focus();
           const rect = event.currentTarget.getBoundingClientRect();
           heldPointer.current = (event.clientX - rect.left) / rect.width < 0.5 ? -1 : 1; }}
