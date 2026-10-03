@@ -13,13 +13,16 @@ import {
   seedForDate, generateTower, startRun, step, scoreOf, botRun, encodeRun, decodeRun,
 } from "./tower";
 
-const VIEW = { width: 360, height: 640 };
-const LANE_MARGIN = (VIEW.width - WORLD_WIDTH) / 2; // 30px either side of the 300-wide lane
+// The canvas's backing store always matches the SDK frame's actual CSS aspect ratio exactly (see the
+// ResizeObserver below) — the whole point is that there is never a gap on any side to letterbox. Only the
+// width varies by frame shape; the height stays fixed at this reference so the *amount* of tower visible,
+// the camera and the physics constants tuned against it never depend on the screen size.
+const REFERENCE_HEIGHT = 640;
 // Between two platforms the Friend's real height naturally dips below the last peak by as much as FALL_MARGIN
 // (losing more than that ends the run) before the next bounce resets it — so the anchor needs that much room
 // below it on screen, not just room above it for the camera's climb lag, or an ordinary mid-run dip pushes the
 // Friend toward the bottom edge even though nothing is wrong.
-const CAMERA_ANCHOR = VIEW.height * 0.34;
+const CAMERA_ANCHOR = REFERENCE_HEIGHT * 0.34;
 /** How quickly the camera's world-height reference catches up to the Friend's highest point. Exponential
  * smoothing: with a constant climb speed v, the camera settles to a steady lag of v / CAMERA_CATCH_UP_RATE
  * world units behind the peak. The fastest sustained climb measured in tower.test.mjs's bot runs is well
@@ -31,26 +34,31 @@ const NEON = "#ccff00";
 const todaySeed = () => seedForDate(new Date().toISOString().slice(0, 10));
 const randomSeed = () => { const words = new Uint32Array(1); crypto.getRandomValues(words); return words[0]; };
 
-type Ghost = Readonly<{ label: string; color: string; tower: Tower; transitions: readonly Transition[]; dir: Dir; state: RunState; index: number }>;
+type Ghost = Readonly<{ label: string; color: string; tower: Tower; transitions: readonly Transition[]; dir: Dir; state: RunState; index: number; starFlash: number }>;
 type RunRecord = Readonly<{ seed: number; transitions: readonly Transition[]; score: number }>;
 type Screen = "pick" | "play" | "result";
 type Particle = { x: number; y: number; vx: number; vy: number; life: number; color: string };
 type Popup = { x: number; y: number; life: number; text: string };
 
 function makeGhost(label: string, color: string, tower: Tower, transitions: readonly Transition[]): Ghost {
-  return { label, color, tower, transitions, dir: 0, state: startRun(), index: 0 };
+  return { label, color, tower, transitions, dir: 0, state: startRun(), index: 0, starFlash: 0 };
 }
+/** A ghost is its own independent replay — tower.ts tracks its starsCollected separately from the live
+ * player's, exactly like two different runs of the same tower naturally would — so its own star flash fires
+ * from its own state, never the player's, even when a ghost is standing right where the player is. */
 function advanceGhost(ghost: Ghost): Ghost {
-  if (!ghost.state.alive) return ghost;
+  if (!ghost.state.alive) return { ...ghost, starFlash: Math.max(0, ghost.starFlash - DT / 0.3) };
   let { dir, index } = ghost;
   while (index < ghost.transitions.length && ghost.transitions[index].tick <= ghost.state.tick) { dir = ghost.transitions[index].dir; index++; }
-  return { ...ghost, dir, index, state: step(ghost.tower, ghost.state, dir) };
+  const previousStars = ghost.state.stars, state = step(ghost.tower, ghost.state, dir);
+  const starFlash = state.stars > previousStars ? 1 : Math.max(0, ghost.starFlash - DT / 0.3);
+  return { ...ghost, dir, index, state, starFlash };
 }
 /** The lane wraps left-right (see tower.ts); draw whichever copy of x is on screen, sometimes both near an edge. */
-function wrappedScreenXs(x: number): number[] {
-  const xs = [LANE_MARGIN + x];
-  if (x < PLAYER_RADIUS) xs.push(LANE_MARGIN + x + WORLD_WIDTH);
-  if (x > WORLD_WIDTH - PLAYER_RADIUS) xs.push(LANE_MARGIN + x - WORLD_WIDTH);
+function wrappedScreenXs(x: number, laneMargin: number): number[] {
+  const xs = [laneMargin + x];
+  if (x < PLAYER_RADIUS) xs.push(laneMargin + x + WORLD_WIDTH);
+  if (x > WORLD_WIDTH - PLAYER_RADIUS) xs.push(laneMargin + x - WORLD_WIDTH);
   return xs;
 }
 function spawnBurst(particles: Particle[], x: number, y: number, color: string, count: number) {
@@ -125,22 +133,34 @@ function starPath(ctx: CanvasRenderingContext2D, cx: number, cy: number, outerR:
  * from frame to frame (it is not re-randomized on every draw), so stars hold still while the camera scrolls.
  * Purely decorative — unrelated to tower.ts's seeded generation, so it never affects the physics or score. */
 const STAR_BAND = 70;
-function starsBetween(topHeight: number, bottomHeight: number): { x: number; y: number; size: number }[] {
+/** Spans the whole frame (spanWidth), not just the narrow tower lane, in plain canvas x — the sky is not part
+ * of the lane that wraps, so these are never offset by LANE_MARGIN the way anything tied to tower.ts's world
+ * coordinates is. */
+function starsBetween(topHeight: number, bottomHeight: number, spanWidth: number): { x: number; y: number; size: number }[] {
   const stars: { x: number; y: number; size: number }[] = [];
   const first = Math.floor(bottomHeight / STAR_BAND), last = Math.ceil(topHeight / STAR_BAND);
   for (let band = first; band <= last; band++) {
     let h = (band * 2654435761) >>> 0; h ^= h >>> 15; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13;
     const roll = (h >>> 0) / 4294967296;
-    if (roll > 0.55) continue; // most bands are empty; only some carry a star
-    stars.push({ x: ((h >>> 8) % 1000) / 1000 * WORLD_WIDTH, y: band * STAR_BAND + (h % STAR_BAND), size: 1 + (h % 3) * 0.5 });
+    if (roll > 0.4) continue; // most bands are empty; only some carry a star
+    stars.push({ x: ((h >>> 8) % 1000) / 1000 * spanWidth, y: band * STAR_BAND + (h % STAR_BAND), size: 1 + (h % 3) * 0.5 });
   }
   return stars;
 }
-/** A fixed skyline silhouette near the ground, in world units; it fades out as the camera climbs away. */
+/** A skyline silhouette near the ground, one tile's worth of buildings in plain canvas x; drawSkyline below
+ * repeats it sideways to cover whatever the frame's actual width turns out to be. It fades out as the camera
+ * climbs away, same as the star field is unrelated to tower.ts's own world coordinates or its seed. */
+const SKYLINE_TILE_WIDTH = 290;
 const SKYLINE: readonly [number, number, number][] = [ // [x, width, height]
   [4, 20, 60], [26, 16, 100], [44, 22, 44], [70, 18, 130], [92, 26, 70], [122, 16, 95],
   [142, 24, 50], [170, 18, 115], [192, 22, 65], [218, 16, 150], [238, 20, 55], [262, 26, 90],
 ];
+function drawSkyline(ctx: CanvasRenderingContext2D, toScreenY: (height: number) => number, spanWidth: number) {
+  const tiles = Math.ceil(spanWidth / SKYLINE_TILE_WIDTH);
+  for (let tile = 0; tile < tiles; tile++) for (const [x, width, height] of SKYLINE) {
+    ctx.fillRect(tile * SKYLINE_TILE_WIDTH + x, toScreenY(height) - 1, width, height);
+  }
+}
 
 type Run = {
   tower: Tower; state: RunState; transitions: Transition[]; lastDir: Dir; bot: Ghost; own: Ghost[]; imported: Ghost | null;
@@ -153,6 +173,12 @@ type Run = {
 
 export default function FriendClimb({ friendId, client, paused }: GameComponentProps) {
   const canvas = useRef<HTMLCanvasElement>(null);
+  // The canvas's current backing-store size in logical pixels, kept exactly in sync with its CSS box by the
+  // ResizeObserver below; height is always REFERENCE_HEIGHT, width tracks whatever the SDK frame's actual
+  // shape is right now. The render loop reads this every frame instead of a fixed constant, so the dark
+  // background, parallax and lane all fill the frame edge to edge on any aspect ratio, never leaving a gap
+  // for the frame's own background to show through.
+  const viewRef = useRef({ width: REFERENCE_HEIGHT * 0.75, height: REFERENCE_HEIGHT });
   // The score readout changes every physics tick; writing it to this DOM node directly from the render loop
   // (throttled below) keeps it live without asking React to re-render the whole component ~60 times a second.
   // A prior version read runRef.current.state.height only inside the JSX, which only re-evaluates on a React
@@ -212,6 +238,21 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     if (!node || !ctx) { setFailed(true); setStatus("This browser cannot render the tower."); return; }
     let cancelled = false, frame = 0, previousTime = 0, accumulator = 0, lastHudUpdate = 0;
     setFailed(false); setStatus("Loading your Friend…");
+    // Keeps the backing store's own intrinsic aspect ratio exactly equal to the CSS box's (see style.css: the
+    // canvas is width/height:100% of .fc-scene, no max-width/max-height clamp), so there is never a gap on
+    // either side for .fc-scene's background to show through. Changing width/height clears the canvas, which
+    // is fine: the next animation frame redraws everything regardless.
+    const resize = () => {
+      const box = node.getBoundingClientRect();
+      if (box.width <= 0 || box.height <= 0) return;
+      const width = Math.max(1, Math.round(REFERENCE_HEIGHT * (box.width / box.height)));
+      if (node.width === width && node.height === REFERENCE_HEIGHT) return;
+      node.width = width; node.height = REFERENCE_HEIGHT;
+      viewRef.current = { width, height: REFERENCE_HEIGHT };
+    };
+    resize();
+    const resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(node);
     // Built once per mount, reused by drawImage every frame after — see the "Arcade Neon rendering" helpers.
     const glowDot = buildGlowDot(16), hazardPattern = buildHazardPattern(ctx);
     const playerSprites = new Map<string, HTMLCanvasElement>();
@@ -222,6 +263,9 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
       if (snapshot.friendId !== friendId) throw new Error("Game session does not match the selected Friend.");
       setStatus("");
       const render = (now: number) => {
+        // Shadows the removed module-level constants of the same name on purpose: every reference below is
+        // unchanged from before this frame became responsive, it now just reads the current frame shape.
+        const VIEW = viewRef.current, LANE_MARGIN = Math.max(10, (VIEW.width - WORLD_WIDTH) / 2);
         const dt = previousTime ? Math.min((now - previousTime) / 1000, 0.05) : 0; previousTime = now;
         const run = runRef.current, active = !live.current.paused && live.current.menu === null && live.current.screen === "play" && !document.hidden;
         if (run && active && run.state.alive) {
@@ -274,14 +318,14 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
           // still dark lane reads just as clearly and this is the only truly optional layer per frame.
           const topHeight = run.cameraHeight + VIEW.height - CAMERA_ANCHOR, bottomHeight = run.cameraHeight - CAMERA_ANCHOR;
           ctx.fillStyle = "#fff"; ctx.globalAlpha = 0.5;
-          for (const star of starsBetween(topHeight, bottomHeight)) {
-            const y = toScreenY(star.y); starPath(ctx, LANE_MARGIN + star.x, y, star.size * 1.6, star.size * 0.7); ctx.fill();
+          for (const star of starsBetween(topHeight, bottomHeight, VIEW.width)) {
+            const y = toScreenY(star.y); starPath(ctx, star.x, y, star.size * 1.6, star.size * 0.7); ctx.fill();
           }
           ctx.globalAlpha = 1;
           const skylineFade = Math.max(0, 1 - run.cameraHeight / 900);
           if (skylineFade > 0.02) {
             ctx.globalAlpha = skylineFade * 0.8; ctx.fillStyle = "#0e140a";
-            for (const [x, width, height] of SKYLINE) ctx.fillRect(LANE_MARGIN + x, toScreenY(height) - 1, width, height);
+            drawSkyline(ctx, toScreenY, VIEW.width);
             ctx.globalAlpha = 1;
           }
         }
@@ -311,7 +355,9 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             if (motion && !platform.breaking) { ctx.lineWidth = 5; ctx.beginPath(); ctx.roundRect(left, y - 6, platform.width, 10, 4); ctx.stroke(); }
             ctx.strokeStyle = NEON; ctx.lineWidth = 2;
             ctx.beginPath(); ctx.roundRect(left, y - 6, platform.width, 10, 4); ctx.fill(); ctx.stroke();
-            if (platform.star) {
+            // Gone once the live player's own run has it — run.state.starsCollected, not platform.star alone,
+            // which never changes and used to leave every star showing forever, already collected or not.
+            if (platform.star && !run.state.starsCollected.has(index)) {
               if (motion) ctx.drawImage(glowDot, LANE_MARGIN + platform.x - 16, y - 32, 32, 32);
               ctx.fillStyle = NEON; ctx.strokeStyle = "#000"; ctx.lineWidth = 1.5;
               starPath(ctx, LANE_MARGIN + platform.x, y - 16, 8, 3.5); ctx.fill(); ctx.stroke();
@@ -321,7 +367,15 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             if (!ghost.state.alive) continue;
             const y = toScreenY(ghost.state.height);
             if (y < -10 || y > VIEW.height + 10) continue;
-            for (const x of wrappedScreenXs(ghost.state.x)) {
+            for (const x of wrappedScreenXs(ghost.state.x, LANE_MARGIN)) {
+              // A ghost's own short flash when its own replay collects a star — from its own starFlash, which
+              // tracks its own state.stars, never the live player's (see advanceGhost).
+              if (motion && ghost.starFlash > 0) {
+                const flashSize = 60 * (1.4 - ghost.starFlash);
+                ctx.globalAlpha = ghost.starFlash * 0.6;
+                ctx.drawImage(glowDot, x - flashSize / 2, y - flashSize / 2, flashSize, flashSize);
+                ctx.globalAlpha = 1;
+              }
               ctx.strokeStyle = ghost.color; ctx.lineWidth = 2; ctx.setLineDash([3, 3]);
               ctx.beginPath(); ctx.arc(x, y, PLAYER_RADIUS * 0.9, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
               ctx.fillStyle = ghost.color; ctx.font = "9px monospace"; ctx.textAlign = "center"; ctx.fillText(ghost.label, x, y - 16);
@@ -349,7 +403,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
           const facing = run.lastDir === -1 ? "left" : "right";
           if (!playerSprites.has(facing)) playerSprites.set(facing, buildPlayerSprite(spriteFrame(sprites, facing, false, 0, facing).frame.rows));
           const sprite = playerSprites.get(facing)!, half = sprite.width / 2;
-          for (const x of wrappedScreenXs(run.state.x)) {
+          for (const x of wrappedScreenXs(run.state.x, LANE_MARGIN)) {
             // Lines the 16x16 mask back up with where the old, unpadded sprite used to sit on screen (bottom
             // near y + 5); the extra PLAYER_SPRITE_PAD on every side is just the glow halo's canvas, not more body.
             const y = toScreenY(run.state.height), top = y - 75 * stretch - PLAYER_SPRITE_PAD;
@@ -390,7 +444,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     }).catch(() => { if (!cancelled) { setFailed(true); setStatus("Your Friend's artwork could not load. Check your connection and retry."); } });
     window.addEventListener("blur", stop); document.addEventListener("visibilitychange", stop);
     return () => {
-      cancelled = true; cancelAnimationFrame(frame); stop();
+      cancelled = true; cancelAnimationFrame(frame); stop(); resizeObserver.disconnect();
       window.removeEventListener("blur", stop); document.removeEventListener("visibilitychange", stop);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -421,7 +475,9 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     </div>
 
     <div className="fc-scene" inert={sceneBlocked || undefined}>
-      <canvas ref={canvas} width={VIEW.width} height={VIEW.height} tabIndex={sceneBlocked ? -1 : 0}
+      {/* width/height are a placeholder default; the effect's ResizeObserver sets the real backing-store size
+          to exactly match the frame's actual aspect ratio as soon as it mounts. */}
+      <canvas ref={canvas} width={Math.round(REFERENCE_HEIGHT * 0.75)} height={REFERENCE_HEIGHT} tabIndex={sceneBlocked ? -1 : 0}
         aria-label="Climbing tower. Arrow keys or A/D to steer, or hold either side of the tower to steer there."
         onBlur={stop}
         // event.code names the physical key, not the character it types, so steering works on any keyboard

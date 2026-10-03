@@ -1,31 +1,29 @@
-.fc-game{position:relative;width:100%;height:100%;overflow:hidden;color:#000;background:#fff;font:14px/1.4 monospace}
+.fc-game{position:relative;width:100%;height:100%;overflow:hidden;color:#eafff0;background:#060606;font:14px/1.4 monospace}
 .fc-top{position:absolute;inset:14px 16px auto;z-index:2;display:flex;align-items:center;gap:8px;pointer-events:none}
-.fc-top span{margin-right:auto;background:#fff;padding:8px;border:1px solid #000}
+.fc-top span{margin-right:auto;background:#000;color:#ccff00;padding:8px;border:2px solid #ccff00;text-shadow:0 0 4px rgba(204,255,0,.6)}
 .fc-top button{pointer-events:auto}
-.fc-game button,.fc-loading button{font:inherit;cursor:pointer;padding:9px 13px;border:2px solid #000;background:#fff;color:#000}
+.fc-game button,.fc-loading button{font:inherit;cursor:pointer;padding:9px 13px;border:2px solid #ccff00;background:#0c0c0c;color:#ccff00}
 .fc-game button:disabled{cursor:default;opacity:.5}
-.fc-game button[aria-pressed="true"]{background:#000;color:#fff}
-/* The top bar sits over the dark play canvas during a run, so it gets its own on-brand dark/neon look
-   regardless of what screen is showing underneath (white on the picker and result screens too, where it
-   still reads fine). */
-.fc-top span{background:#000;color:#ccff00;border:2px solid #ccff00;text-shadow:0 0 4px rgba(204,255,0,.6)}
-.fc-top button{background:#000;color:#ccff00;border-color:#ccff00}
-.fc-top button[aria-pressed="true"]{background:#ccff00;color:#000}
-.fc-scene{position:absolute;inset:0;display:flex;justify-content:center;align-items:center;background:#fff}
-.fc-scene canvas{display:block;max-width:100%;max-height:100%;image-rendering:pixelated}
+.fc-game button[aria-pressed="true"]{background:#ccff00;color:#000}
+/* No centering/background here on purpose: the canvas's own backing store is resized in index.tsx to match
+   this container's exact aspect ratio (see the ResizeObserver there), so it fills edge to edge with no gap
+   on any side to show through — this element's own background never actually becomes visible during play. */
+.fc-scene{position:absolute;inset:0;overflow:hidden;background:#060606}
+.fc-scene canvas{display:block;width:100%;height:100%;image-rendering:pixelated}
 /* The SDK toolbar overlays the bottom-left and bottom-right corners of the frame; this stays clear of it. */
-.fc-hint{position:absolute;bottom:54px;left:16px;right:16px;margin:0;text-align:center;font-size:11px;pointer-events:none}
+.fc-hint{position:absolute;bottom:54px;left:16px;right:16px;margin:0;text-align:center;font-size:11px;pointer-events:none;color:#9bd98a}
 .fc-star-hint{bottom:72px;color:#ccff00}
 /* justify-content:flex-start (not center) plus generous bottom padding, so tall content never lands under
    the SDK's toolbar, which always overlays the bottom-left and bottom-right corners of the frame. */
-.fc-status,.fc-pick,.fc-result{position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:flex-start;background:#fff;text-align:center;padding:24px 24px 90px;overflow:auto}
+.fc-status,.fc-pick,.fc-result{position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:flex-start;background:#060606;text-align:center;padding:24px 24px 90px;overflow:auto}
 .fc-status{justify-content:center}
 .fc-status p{margin:0}
-.fc-pick h1,.fc-result h1{margin:0;font-size:22px}
+.fc-pick h1,.fc-result h1{margin:0;font-size:22px;color:#ccff00;text-shadow:0 0 6px rgba(204,255,0,.5)}
 .fc-pick p,.fc-result p{max-width:320px;margin:0}
-.fc-note{font-size:11px;opacity:.8}
+.fc-note{font-size:11px;opacity:.75}
 .fc-import{display:flex;flex-direction:column;gap:6px;width:min(320px,100%)}
-.fc-import input{font:inherit;padding:8px;border:2px solid #000;background:#fff;color:#000;width:100%;box-sizing:border-box}
+.fc-import input{font:inherit;padding:8px;border:2px solid #ccff00;background:#0c0c0c;color:#eafff0;width:100%;box-sizing:border-box}
+.fc-import input::placeholder{color:#5a7a4a}
 @media(max-width:520px){
   .fc-top{inset:6px 6px auto;gap:4px;font-size:9px}
   .fc-top button{padding:4px 6px;min-height:0;white-space:nowrap}
