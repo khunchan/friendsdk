@@ -43,6 +43,50 @@ by the next plain landing. Every 1000 points of score — the exact same number 
 a separate height or distance unit — fires a brief, bright milestone banner and a subtle background tint
 shift, each exactly once. Both are purely a progress cue, never fed back into the physics or the score itself.
 
+## The chase, drones and power-ups
+
+Jumping with nothing else going on got repetitive once a run passed a few hundred points — no time pressure
+and no sense of competing with anyone in the moment. Five mechanics address that, each with its own Settings
+toggle (default on) so you can compare what each one actually adds:
+
+- **Chase.** A rising, accelerating "lava" floor, completely independent of how high you have personally
+  climbed — unlike `FALL_MARGIN` (which only ever follows your own peak), this punishes stalling at a
+  perfectly safe height, not just falling. It starts with 8 seconds of total safety (`CHASE_GRACE_TICKS`),
+  then rises and keeps accelerating, so standing still is never a long-term option. Drawn as a filled,
+  wavy-edged band in the same black/green/white palette as everything else — never a traditional orange/red
+  lava — and it IS the death boundary whenever it is ahead of `FALL_MARGIN`: the camera's reference height
+  becomes `max(peakHeight, chaseHeight(tick) + FALL_MARGIN)`, the same "screen's bottom edge is exactly the
+  death line" guarantee from the camera section below, generalized to whichever threshold is currently
+  stricter. `tower.test.mjs` proves both that it eventually catches a Friend who stops moving and that it
+  never fires at all while disabled.
+- **Drones.** Small hazards that patrol a short horizontal stretch at specific heights (never before
+  `DRONE_START_HEIGHT`); crossing through one knocks you down hard and starts a brief invulnerability window,
+  so one overlap is one hit, not one hit per tick. A drone's own width is kept well under the lane's full
+  width on purpose, so a gap big enough to fit through always exists regardless of seed or where in its
+  oscillation it currently is — `tower.test.mjs` checks this algebraically (a fixed-width guarantee, not a
+  per-seed simulation), plus a dedicated test for the knock-down-then-cooldown behavior itself.
+- **Power-ups**, placed on specific platforms at generation time, deterministic like stars and springs: a
+  **rocket** (a steady, obstruction-free climb for about 2.5 seconds), a **shield** (cancels exactly one
+  otherwise-fatal fall, then is gone), and a **magnet** (auto-collects any star within reach for about 5
+  seconds, even ones you never actually land on — capped at your own peak height reached so far, so it can
+  never credit a star you have not genuinely gotten up to yet). All three are reusable, like a spring, not
+  single-use like a star.
+- **Race HUD.** A small second readout next to the score — "1st of N" among everyone sharing the screen right
+  now (the bot, your own past runs, any pasted code) plus a direct delta against the bot specifically, since
+  the bot is the one opponent every player always has. Purely presentational.
+- **Music & FX.** A short procedural arpeggio, synthesized directly with WebAudio (never a sampled or
+  licensed track), whose tempo itself visibly/audibly speeds up the longer the chase has had to build up —
+  plus screen shake and a brief flash on a hit or a death. Screen shake is skipped entirely under Reduce
+  Motion, matching that setting's existing "no shake" bullet; the music keeps going either way, muted by the
+  same Sound button as everything else.
+
+Chase, drones and power-ups all change what a given seed and recorded moves replay to, so each run snapshots
+its own current Settings into a `RunRules` the moment it starts and encodes that into its run code (see
+below) — a ghost (the bot, your own past runs, a pasted code) always replays under the exact rules it was
+recorded with, never whatever you currently have toggled, so two players comparing the same code never get a
+different outcome depending on their own Settings. Race HUD and Music & FX never affect the physics at all,
+so they are not part of a run's rules or its code.
+
 ## The camera and the death boundary
 
 The visible world is always exactly `REFERENCE_HEIGHT` (640) world-units tall, regardless of the actual
@@ -106,12 +150,13 @@ The physics run on a **fixed 1/60s step**, decoupled from the browser's actual f
 the same recorded left/right presses always replay to the exact same score, on any machine, at any frame
 rate — `tower.test.mjs` checks this too. That determinism is also what makes two things possible:
 
-- **A run code to share.** After a run, a short text code (`FC3.<seed>.<moves>!<score>`) encodes the seed and
-  every direction change — not every frame, so it stays short for a realistic run. A friend pastes it in and
-  races a ghost of that exact run on the same tower. There is no server: the code is the whole message. The
-  version number has moved twice (v1 → v2 → v3, see Known limits), each time because a change to scoring meant
-  old codes could no longer be replayed to the score they claimed; `decodeRun` refuses a v1 or v2 code by name
-  instead of guessing.
+- **A run code to share.** After a run, a short text code (`FC4.<rules digit><seed>.<moves>!<score>`) encodes
+  the seed, which optional rules (chase/drones/power-ups) were active, and every direction change — not every
+  frame, so it stays short for a realistic run. A friend pastes it in and races a ghost of that exact run,
+  under its own recorded rules, on the same tower. There is no server: the code is the whole message. The
+  version number has moved three times now (v1 → v2 → v3 → v4, see Known limits), each time because a change
+  to scoring or survival meant old codes could no longer be replayed to the score they claimed; `decodeRun`
+  refuses a v1, v2 or v3 code by name instead of guessing.
 - **A bot ghost from your first attempt.** A simple scripted "bot" (always labeled "bot", never shown as a
   Friend) aims at the next platform with a human-scale reaction delay and an increasing chance to fumble as
   the tower gets harder, so it is an opponent, not an aimbot — `tower.test.mjs` checks that it is reproducible
@@ -141,22 +186,25 @@ rate — `tower.test.mjs` checks this too. That determinism is also what makes t
   once — repeat bounces on one star platform could inflate a score without limit, a real hole for any future
   tournament. Fixed by tracking collected stars the same way broken platforms are tracked (once per platform,
   ever); the run code version moved to `FC2`. v2 had no springs or combo bonus; adding them in v3 (`FC3`)
-  changes what the same seed and recorded moves replay to, same as the v1 fix did. Both older prefixes are now
+  changes what the same seed and recorded moves replay to, same as the v1 fix did. v3 had no chase, drones or
+  power-ups; adding them in v4 (`FC4`) changes survival itself, not just scoring, and also added `RunRules`
+  (which of those three were active) as a new thing a code has to carry. All three older prefixes are now
   refused with their own clear message rather than replayed to a different score.
-- **Features considered for the "jumping feels empty" pass and not built this round:** moving platforms
-  (left-right) and avoidable obstacles (birds/drones). Both would need their own reachability proof added to
-  `tower.test.mjs` — a moving platform's catchable window changes the gap math everywhere, and an obstacle that
-  ends the run on touch needs a guarantee it can always be dodged, not just usually — which is more scope than
-  springs, milestones and the combo bonus together. Good candidates for a follow-up round once those three have
-  been played with for a while.
+- **Moving platforms were considered for the "jumping feels empty" pass and not built.** They would need
+  their own reachability proof added to `tower.test.mjs` — a moving platform's catchable window changes the
+  gap math everywhere a static platform's doesn't — more scope than the five mechanics built this round. A
+  good candidate for a follow-up once those have been played with for a while.
+- **Chase/drone/power-up tuning is a first pass**, same disclaimer as the bot's fumble rate above — the exact
+  numbers (`CHASE_BASE_SPEED`, `CHASE_ACCEL`, `DRONE_SPACING`, power-up pickup odds) are reasoned-about
+  starting points, not balanced against real play yet.
 
 ## Checks
 
-Run on 2026-10-04 with SDK v0.1.4 and Node.js 22, from the SDK root:
+Run on 2026-10-05 with SDK v0.1.4 and Node.js 22, from the SDK root:
 
 | Command | Result |
 | --- | --- |
-| `node --test games/friend-climb/tower.test.mjs` | 16 tests: replay, encode/decode, run-code version rejection, reachability, tower safety, camera/death-boundary alignment, springs, combo, the bot, scoring |
+| `node --test games/friend-climb/tower.test.mjs` | 24 tests: replay, encode/decode (incl. RunRules), run-code version rejection, reachability (platforms and drones), tower safety, camera/death-boundary alignment, springs, combo, chase, drones, rocket, shield, magnet, the bot, scoring |
 | `node scripts/dev-game.mjs check games/friend-climb` (`friendsdk check`) | game definition and build |
 | `node scripts/dev-game.mjs test games/friend-climb` (`friendsdk test`) | the SDK's automated browser check with its mock wallet |
 | `node games/friend-climb/check-browser.mjs` | this game's own browser check at 1100 px and 360 px |
@@ -168,4 +216,7 @@ Run on 2026-10-04 with SDK v0.1.4 and Node.js 22, from the SDK root:
 `index.tsx` (the game component), `tower.ts` (deterministic tower generation, physics, the bot, run codes —
 framework-free, unit-tested on its own), `tower.test.mjs`, `check-browser.mjs`, `style.css`, `game.json`
 (an unused schema-only chance-game definition; this game never calls `buy`, `play`, `settle` or `redeem`,
-the same pattern `examples/scrolling-world` uses for a free exploration game).
+the same pattern `examples/scrolling-world` uses for a free exploration game), `game/platform.ts` (the three
+seams between this game and whatever platform runs it — identity, persistence, randomness — modeled directly
+on `penalty-kings`' own `game/platform.ts`, the pattern Rare Friends actually used to fork that game onto SDK
+v0.2.0 with real money; see its own file comment for what is and is not an integration point today).

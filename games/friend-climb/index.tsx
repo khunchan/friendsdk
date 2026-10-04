@@ -9,9 +9,11 @@ import "@rarefriends/friendsdk/frame.css";
 import "./style.css";
 import {
   DT, WORLD_WIDTH, PLAYER_RADIUS, HEIGHT_PER_POINT, STAR_POINTS, FALL_MARGIN, REFERENCE_HEIGHT,
-  type Dir, type Tower, type RunState, type Transition,
+  DRONE_RADIUS, DEFAULT_RULES, CHASE_GRACE_TICKS, chaseHeight, droneX,
+  type Dir, type Tower, type RunState, type Transition, type RunRules, type Drone,
   seedForDate, generateTower, startRun, step, scoreOf, botRun, encodeRun, decodeRun,
 } from "./tower";
+import { defaultPlatform } from "./game/platform";
 
 // The canvas's backing store always matches the SDK frame's actual CSS aspect ratio exactly (see the
 // ResizeObserver below) — the whole point is that there is never a gap on any side to letterbox. Only the
@@ -33,25 +35,27 @@ const CAMERA_ANCHOR = REFERENCE_HEIGHT - FALL_MARGIN;
 /** The whole scene stays inside this three-color palette: black, white and Rare Friends' signal green. */
 const NEON = "#ccff00";
 const todaySeed = () => seedForDate(new Date().toISOString().slice(0, 10));
-const randomSeed = () => { const words = new Uint32Array(1); crypto.getRandomValues(words); return words[0]; };
 
-type Ghost = Readonly<{ label: string; color: string; tower: Tower; transitions: readonly Transition[]; dir: Dir; state: RunState; index: number; starFlash: number }>;
-type RunRecord = Readonly<{ seed: number; transitions: readonly Transition[]; score: number }>;
+type Ghost = Readonly<{ label: string; color: string; tower: Tower; transitions: readonly Transition[]; rules: RunRules; dir: Dir; state: RunState; index: number; starFlash: number }>;
+type RunRecord = Readonly<{ seed: number; transitions: readonly Transition[]; score: number; rules: RunRules }>;
 type Screen = "pick" | "play" | "result";
 type Particle = { x: number; y: number; vx: number; vy: number; life: number; color: string };
 type Popup = { x: number; y: number; life: number; text: string };
 
-function makeGhost(label: string, color: string, tower: Tower, transitions: readonly Transition[]): Ghost {
-  return { label, color, tower, transitions, dir: 0, state: startRun(), index: 0, starFlash: 0 };
+function makeGhost(label: string, color: string, tower: Tower, transitions: readonly Transition[], rules: RunRules): Ghost {
+  return { label, color, tower, transitions, rules, dir: 0, state: startRun(), index: 0, starFlash: 0 };
 }
 /** A ghost is its own independent replay — tower.ts tracks its starsCollected separately from the live
  * player's, exactly like two different runs of the same tower naturally would — so its own star flash fires
- * from its own state, never the player's, even when a ghost is standing right where the player is. */
+ * from its own state, never the player's, even when a ghost is standing right where the player is. Each
+ * ghost always replays under its OWN recorded rules (own.rules / the imported code's decoded rules), never
+ * whatever the live player currently has toggled in Settings — otherwise the same code could replay to a
+ * different outcome depending on who is watching it. */
 function advanceGhost(ghost: Ghost): Ghost {
   if (!ghost.state.alive) return { ...ghost, starFlash: Math.max(0, ghost.starFlash - DT / 0.3) };
   let { dir, index } = ghost;
   while (index < ghost.transitions.length && ghost.transitions[index].tick <= ghost.state.tick) { dir = ghost.transitions[index].dir; index++; }
-  const previousStars = ghost.state.stars, state = step(ghost.tower, ghost.state, dir);
+  const previousStars = ghost.state.stars, state = step(ghost.tower, ghost.state, dir, ghost.rules);
   const starFlash = state.stars > previousStars ? 1 : Math.max(0, ghost.starFlash - DT / 0.3);
   return { ...ghost, dir, index, state, starFlash };
 }
@@ -67,6 +71,24 @@ function spawnBurst(particles: Particle[], x: number, y: number, color: string, 
     const angle = Math.PI * (0.15 + 0.7 * Math.random());
     particles.push({ x, y, vx: Math.cos(angle) * 90 * (Math.random() - 0.5) * 2, vy: Math.sin(angle) * 90, life: 0.4, color });
   }
+}
+
+// --- Procedural music: a short plucked arpeggio note, synthesized directly with WebAudio (never a sampled or
+// licensed track) — the chase render loop below schedules these at an interval that shrinks as the chase
+// accelerates, so the tempo itself audibly ramps up with the on-screen threat, not just a louder mix. ---
+const MUSIC_SCALE = [220, 261.63, 329.63, 392, 440, 523.25]; // A minor pentatonic-ish, kept small and calm
+function playMusicNote(ctx: AudioContext, frequency: number, urgency: number) {
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator(), gain = ctx.createGain();
+  osc.type = "triangle"; osc.frequency.value = frequency;
+  // A brief, plucked envelope: fast attack, short decay — urgency both raises the volume a little and
+  // shortens the note so a fast, tense tempo does not smear into itself.
+  const peak = 0.05 + 0.03 * urgency, duration = 0.5 - 0.3 * urgency;
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(peak, now + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+  osc.connect(gain); gain.connect(ctx.destination);
+  osc.start(now); osc.stop(now + duration + 0.02);
 }
 
 // --- Arcade Neon rendering: everything below builds small offscreen bitmaps ONCE (sprite outline, glow dot,
@@ -174,7 +196,7 @@ const MILESTONE_STEP = 1000;
 const ZONE_BACKGROUNDS: readonly string[] = ["#060606", "#06090a", "#060a07", "#0a0906", "#090609"];
 
 type Run = {
-  tower: Tower; state: RunState; transitions: Transition[]; lastDir: Dir; bot: Ghost; own: Ghost[]; imported: Ghost | null;
+  tower: Tower; state: RunState; transitions: Transition[]; rules: RunRules; lastDir: Dir; bot: Ghost; own: Ghost[]; imported: Ghost | null;
   // Per-run particle state. This used to live outside the Run object and never reset between games, so a
   // second run started after climbing high in the first one rendered the Friend far below the visible
   // canvas — invisible, camera stuck at the previous run's height. Keeping it here fixes that at the root:
@@ -185,6 +207,9 @@ type Run = {
   // banner still has left to show; both purely presentational, derived from the same score the HUD shows,
   // never fed back into it.
   milestoneZone: number; milestoneFlash: number;
+  // Screen shake magnitude (decaying) and a brief full-canvas color flash, both purely presentational and
+  // both skipped entirely under reduced motion — see the render loop's "FX" block.
+  shake: number; hitFlash: number;
 };
 
 export default function FriendClimb({ friendId, client, paused }: GameComponentProps) {
@@ -200,6 +225,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
   // A prior version read runRef.current.state.height only inside the JSX, which only re-evaluates on a React
   // re-render — none of which the render loop triggers — so the HUD showed "Height 0" for the whole run.
   const scoreLabel = useRef<HTMLSpanElement>(null);
+  const raceLabel = useRef<HTMLSpanElement>(null);
   const [status, setStatus] = useState("Loading your Friend…"), [failed, setFailed] = useState(false), [revision, setRevision] = useState(0);
   const [screen, setScreen] = useState<Screen>("pick");
   const [seed, setSeed] = useState<number>(() => todaySeed());
@@ -211,10 +237,24 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
   const [importedGhost, setImportedGhost] = useState<RunRecord | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
   const [menu, setMenu] = useState<"settings" | null>(null), [muted, setMuted] = useState(true), [reducedMotion, setReducedMotion] = useState(false);
-  const live = useRef({ paused, menu, reducedMotion, screen }); live.current = { paused, menu, reducedMotion, screen };
+  // Every one of these is toggleable in Settings (default on) specifically so the user can compare what each
+  // mechanic actually adds, one at a time — snapshotted into a RunRules at the moment a run starts (see
+  // startGame), never read mid-run, so flipping a toggle never retroactively changes an in-progress climb.
+  const [chaseOn, setChaseOn] = useState(true), [dronesOn, setDronesOn] = useState(true), [powerupsOn, setPowerupsOn] = useState(true);
+  // Purely presentational, so unlike the three above these are never part of RunRules or the run code —
+  // nothing about them can affect a score or a replay's outcome.
+  const [raceHudOn, setRaceHudOn] = useState(true), [fxOn, setFxOn] = useState(true);
+  const live = useRef({ paused, menu, reducedMotion, screen, raceHudOn, fxOn, muted });
+  live.current = { paused, menu, reducedMotion, screen, raceHudOn, fxOn, muted };
+  const platform = useRef(defaultPlatform({ friendId, client })).current;
 
   const sound = useRef<FriendSoundKit | null>(null);
   useEffect(() => { sound.current = createFriendSoundKit({ muted: true }); return () => sound.current?.dispose(); }, []);
+  // Created lazily on the same user gesture that unlocks the SDK sound kit (browsers block audio without one);
+  // disposed on unmount. Scheduling state (nextNoteAt/noteIndex) lives alongside it so the render loop below
+  // can check "is it time for the next note" cheaply every frame without its own separate interval timer.
+  const music = useRef<{ ctx: AudioContext | null; nextNoteAt: number; noteIndex: number }>({ ctx: null, nextNoteAt: 0, noteIndex: 0 });
+  useEffect(() => () => { void music.current.ctx?.close(); }, []);
   useEffect(() => {
     const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
     const change = () => setReducedMotion(preference.matches); change(); preference.addEventListener("change", change);
@@ -236,13 +276,21 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
 
   function startGame(nextSeed: number) {
     const tower = generateTower(nextSeed);
+    // Snapshot of the current Settings toggles, fixed for this run's whole lifetime — flipping a toggle mid-run
+    // (impossible anyway, Settings blocks the scene while open) must never retroactively change an in-progress
+    // climb, and a saved/shared run must always replay under the exact rules it was recorded with.
+    const rules: RunRules = { chase: chaseOn, drones: dronesOn, powerups: powerupsOn };
     const sameTower = ghosts.filter(run => run.seed === nextSeed);
     // Ghost colors stay inside the black/green/white palette — different opacities of white, plus green for
     // a pasted friend's code — and are told apart by their label, not by introducing another hue.
-    const own = sameTower.slice(0, 3).map((run, index) => makeGhost(`run ${index + 1}`, "rgba(255,255,255,0.3)", tower, run.transitions));
-    const bot = makeGhost("bot", "rgba(255,255,255,0.55)", tower, botRun(nextSeed).transitions);
-    const imported = importedGhost && importedGhost.seed === nextSeed ? makeGhost("friend's code", "rgba(204,255,0,0.6)", tower, importedGhost.transitions) : null;
-    runRef.current = { tower, state: startRun(), transitions: [], lastDir: 0, bot, own, imported, particles: [], popups: [], starFlash: 0, milestoneZone: 0, milestoneFlash: 0 };
+    const own = sameTower.slice(0, 3).map((run, index) => makeGhost(`run ${index + 1}`, "rgba(255,255,255,0.3)", tower, run.transitions, run.rules));
+    const bot = makeGhost("bot", "rgba(255,255,255,0.55)", tower, botRun(nextSeed, undefined, rules).transitions, rules);
+    const imported = importedGhost && importedGhost.seed === nextSeed
+      ? makeGhost("friend's code", "rgba(204,255,0,0.6)", tower, importedGhost.transitions, importedGhost.rules) : null;
+    runRef.current = {
+      tower, state: startRun(), transitions: [], rules, lastDir: 0, bot, own, imported,
+      particles: [], popups: [], starFlash: 0, milestoneZone: 0, milestoneFlash: 0, shake: 0, hitFlash: 0,
+    };
     setIsFirstRun(!playedBefore.current); playedBefore.current = true;
     setControlHintVisible(true);
     if (controlHintTimer.current) clearTimeout(controlHintTimer.current);
@@ -250,11 +298,16 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     setSeed(nextSeed); setImportError(""); setScreen("play");
   }
   function endGame(state: RunState) {
-    const score = scoreOf(state), transitions = runRef.current?.transitions ?? [];
-    setGhosts(previous => [{ seed, transitions, score }, ...previous].slice(0, 12));
+    const score = scoreOf(state), run = runRef.current;
+    const transitions = run?.transitions ?? [], rules = run?.rules ?? DEFAULT_RULES;
+    setGhosts(previous => {
+      const next = [{ seed, transitions, score, rules }, ...previous].slice(0, 12);
+      platform.progress.save(next);
+      return next;
+    });
     setBest(previous => ({ ...previous, [seed]: Math.max(previous[seed] ?? 0, score) }));
     setLastScore(score); setLastHeightPoints(Math.floor(state.peakHeight / HEIGHT_PER_POINT)); setLastStars(state.stars); setLastStarPoints(state.starPoints);
-    setLastCode(encodeRun(seed, transitions, score)); setCopyFailed(false); setScreen("result");
+    setLastCode(encodeRun(seed, transitions, score, rules)); setCopyFailed(false); setScreen("result");
   }
 
   // One continuous render loop for the whole component's life: the canvas stays mounted across every screen so
@@ -303,7 +356,9 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             accumulator -= DT;
             if (dirRef.current !== run.lastDir) { run.lastDir = dirRef.current; run.transitions.push({ tick: run.state.tick, dir: dirRef.current }); }
             const previousStars = run.state.stars, previousStarPoints = run.state.starPoints, wasFalling = run.state.vy < 0;
-            run.state = step(run.tower, run.state, dirRef.current);
+            const previousRocket = run.state.rocketTicks, previousShield = run.state.shield;
+            const previousMagnet = run.state.magnetTicks, previousCooldown = run.state.droneCooldown;
+            run.state = step(run.tower, run.state, dirRef.current, run.rules);
             run.bot = advanceGhost(run.bot); run.own = run.own.map(advanceGhost);
             if (run.imported) run.imported = advanceGhost(run.imported);
             if (wasFalling && run.state.vy > 0) {
@@ -322,25 +377,82 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
                 run.starFlash = 1;
               }
             }
+            // Power-up pickups and the drone hit all read as "this field just went from off to on" rather than
+            // needing their own extra RunState flags — simple, and it can never miss or double-fire since
+            // exactly one physics tick is where that transition happens.
+            if (run.state.rocketTicks > 0 && previousRocket === 0) {
+              sound.current?.play("reward");
+              if (!live.current.reducedMotion) run.popups.push({ x: run.state.x, y: run.state.height + 40, life: 1, text: "ROCKET" });
+            }
+            if (run.state.shield && !previousShield) {
+              sound.current?.play("reward");
+              if (!live.current.reducedMotion) run.popups.push({ x: run.state.x, y: run.state.height + 40, life: 1, text: "SHIELD" });
+            }
+            if (run.state.magnetTicks > 0 && previousMagnet === 0) {
+              sound.current?.play("reward");
+              if (!live.current.reducedMotion) run.popups.push({ x: run.state.x, y: run.state.height + 40, life: 1, text: "MAGNET" });
+            }
+            if (previousShield && !run.state.shield && run.state.alive) {
+              // The shield just spent itself to cancel an otherwise-fatal fall — distinct from a normal pickup.
+              sound.current?.play("impact");
+              if (!live.current.reducedMotion) run.popups.push({ x: run.state.x, y: run.state.height + 40, life: 1, text: "SAVED" });
+              if (!live.current.reducedMotion && live.current.fxOn) run.shake = 1;
+            }
+            if (run.state.droneCooldown > 0 && previousCooldown === 0) {
+              sound.current?.play("impact", { volume: 0.8 });
+              if (!live.current.reducedMotion && live.current.fxOn) { run.shake = 1; run.hitFlash = 1; }
+            }
             // Purely presentational milestone banner/zone tint, every MILESTONE_STEP points of the same
             // score the HUD shows ("Score N") — strictly in sync with it, not a separate height or distance
             // reading, since that was confusing (a "100!" banner next to a HUD reading a different number).
             const zone = Math.floor(scoreOf(run.state) / MILESTONE_STEP);
             if (zone > run.milestoneZone) { run.milestoneZone = zone; run.milestoneFlash = 1; sound.current?.play("reward"); }
-            if (!run.state.alive) sound.current?.play("impact", { volume: 0.7 });
+            if (!run.state.alive) {
+              sound.current?.play("impact", { volume: 0.7 });
+              if (!live.current.reducedMotion && live.current.fxOn) { run.shake = 1; run.hitFlash = 1; }
+            }
           }
           if (!run.state.alive) endGame(run.state);
+        }
+        // Procedural music: schedules the next plucked note whenever it's due, tempo tied to how long the
+        // chase has had to build up (see MUSIC_SCALE's comment) — never gated by reducedMotion, since this is
+        // audio, not an on-screen effect; only by the Music & FX toggle and the existing mute button.
+        if (run && active && run.state.alive && live.current.fxOn && !live.current.muted && music.current.ctx && now >= music.current.nextNoteAt) {
+          const urgency = run.rules.chase ? Math.min(1, Math.max(0, run.state.tick - CHASE_GRACE_TICKS) / (60 * 40)) : 0;
+          const note = MUSIC_SCALE[music.current.noteIndex % MUSIC_SCALE.length];
+          playMusicNote(music.current.ctx, note, urgency);
+          music.current.noteIndex++;
+          music.current.nextNoteAt = now + (420 - 220 * urgency);
         }
         // The camera's world-height reference is the run's own peakHeight, read directly every frame — no
         // easing, no lag. peakHeight only ever increases (tower.ts's own monotonic high-water mark), so this
         // is already smooth during a climb and simply holds still while falling; see CAMERA_ANCHOR's comment
         // above for why only this exact, undamped formula keeps the screen's bottom edge on the death line.
-        const toScreenY = (height: number) => CAMERA_ANCHOR - (height - (run?.state.peakHeight ?? 0));
+        // With the chase on, the same bottom-edge-is-the-death-line property has to hold against WHICHEVER of
+        // FALL_MARGIN or the chase is currently stricter — substituting floor = max(peakHeight - FALL_MARGIN,
+        // chaseFloor) into the same derivation gives cameraReference = max(peakHeight, chaseFloor + FALL_MARGIN):
+        // exactly peakHeight whenever FALL_MARGIN is still the binding constraint (unchanged from before), but
+        // pulled up to track the rising lava once it overtakes, so the screen keeps reading "this far below
+        // you is the end" accurately even when that line is the chase, not your own trailing margin.
+        const chaseFloor = run?.rules.chase ? chaseHeight(run.state.tick) : -Infinity;
+        const cameraReference = run ? Math.max(run.state.peakHeight, chaseFloor + FALL_MARGIN) : 0;
+        const toScreenY = (height: number) => CAMERA_ANCHOR - (height - cameraReference);
 
         const motion = !live.current.reducedMotion;
         ctx.clearRect(0, 0, VIEW.width, VIEW.height);
         const zoneIndex = run ? Math.floor(scoreOf(run.state) / MILESTONE_STEP) : 0;
         ctx.fillStyle = ZONE_BACKGROUNDS[zoneIndex % ZONE_BACKGROUNDS.length]; ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+
+        // Screen shake: a small, rapidly-decaying random offset applied to everything drawn below, via one
+        // ctx.translate rather than touching every draw call's own coordinates. Decoupled from motion-reduced
+        // particles/squash on purpose, since the user asked specifically for "no shake under reduced motion" —
+        // run.shake is simply never set above when live.current.reducedMotion is true, so this is a no-op then.
+        if (run && run.shake > 0) {
+          run.shake = Math.max(0, run.shake - dt / 0.3);
+          const magnitude = 6 * run.shake;
+          ctx.save();
+          ctx.translate((Math.random() * 2 - 1) * magnitude, (Math.random() * 2 - 1) * magnitude);
+        }
 
         if (motion && run) {
           // Parallax: a stable, deterministic star field (never re-randomized — see starsBetween) plus a
@@ -402,7 +514,37 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
               ctx.fillStyle = NEON; ctx.strokeStyle = "#000"; ctx.lineWidth = 1.5;
               starPath(ctx, LANE_MARGIN + platform.x, y - 16, 8, 3.5); ctx.fill(); ctx.stroke();
             }
+            // Power-ups are reusable, like a spring (every landing re-triggers them) — see tower.ts's step —
+            // so there is no "collected" gate here, only rules.powerups itself: when that toggle is off, a
+            // run never picks these up, so showing the glyph would be actively misleading.
+            if (platform.powerup && run.rules.powerups) {
+              const px = LANE_MARGIN + platform.x, py = y - 17;
+              ctx.strokeStyle = "#000"; ctx.lineWidth = 1.5; ctx.fillStyle = NEON;
+              if (platform.powerup === "rocket") {
+                ctx.beginPath(); ctx.moveTo(px, py - 7); ctx.lineTo(px + 5, py + 5); ctx.lineTo(px - 5, py + 5);
+                ctx.closePath(); ctx.fill(); ctx.stroke();
+              } else if (platform.powerup === "shield") {
+                ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+              } else {
+                ctx.beginPath(); ctx.arc(px, py, 6, 0.25 * Math.PI, 1.75 * Math.PI); ctx.lineWidth = 3; ctx.strokeStyle = NEON; ctx.stroke();
+                ctx.strokeStyle = "#000"; ctx.lineWidth = 1;
+              }
+            }
           });
+          // Drones: drawn only when the toggle that makes them actually dangerous is on — a visible-but-harmless
+          // drone would just be confusing clutter, the opposite of what a toggle for comparing mechanics needs.
+          if (run.rules.drones) {
+            for (const drone of run.tower.drones) {
+              const y = toScreenY(drone.height);
+              if (y < -20 || y > VIEW.height + 20) continue;
+              const dx = LANE_MARGIN + droneX(drone, run.state.tick);
+              ctx.fillStyle = "#111"; ctx.strokeStyle = NEON; ctx.lineWidth = 2;
+              ctx.beginPath(); ctx.roundRect(dx - DRONE_RADIUS, y - DRONE_RADIUS * 0.6, DRONE_RADIUS * 2, DRONE_RADIUS * 1.2, 4);
+              ctx.fill(); ctx.stroke();
+              ctx.fillStyle = run.state.droneCooldown > 0 ? "rgba(204,255,0,0.4)" : NEON;
+              ctx.beginPath(); ctx.arc(dx, y, 3, 0, Math.PI * 2); ctx.fill();
+            }
+          }
           for (const ghost of [run.bot, run.imported, ...run.own].filter((value): value is Ghost => Boolean(value))) {
             if (!ghost.state.alive) continue;
             const y = toScreenY(ghost.state.height);
@@ -476,18 +618,54 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             ctx.globalAlpha = 1;
             run.milestoneFlash = Math.max(0, run.milestoneFlash - dt / 0.9);
           }
-          // The death boundary itself: with CAMERA_ANCHOR derived from FALL_MARGIN above, height ==
-          // peakHeight - FALL_MARGIN always maps to exactly VIEW.height (REFERENCE_HEIGHT) — the very bottom
-          // row of the canvas — so this fixed-position band IS the death line, not an approximation of one.
-          // Low opacity and drawn on top: it tints the danger zone without hiding a platform or the Friend
-          // standing in it, which is exactly when seeing them clearly matters most.
-          const fogHeight = 70;
-          const fog = ctx.createLinearGradient(0, VIEW.height - fogHeight, 0, VIEW.height);
-          fog.addColorStop(0, "rgba(6,6,6,0)"); fog.addColorStop(1, "rgba(6,6,6,0.55)");
-          ctx.fillStyle = fog; ctx.fillRect(0, VIEW.height - fogHeight, VIEW.width, fogHeight);
-          ctx.strokeStyle = NEON; ctx.globalAlpha = 0.7; ctx.lineWidth = 2;
-          ctx.beginPath(); ctx.moveTo(0, VIEW.height - 2); ctx.lineTo(VIEW.width, VIEW.height - 2); ctx.stroke();
-          ctx.globalAlpha = 1;
+          if (run.rules.chase) {
+            // The chase itself IS the death boundary whenever it is ahead of FALL_MARGIN (see cameraReference
+            // above), so its screen position is exactly toScreenY(chaseFloor) — never a separate guess. Drawn
+            // as a rising, filled "lava" with a wavy top edge (a few sine-offset points, animated by `now` so
+            // it visibly churns) rather than a thin line, since the whole point is that it must always read as
+            // an advancing, unmissable threat, not a subtle gradient at the very edge of the screen.
+            const lavaY = Math.min(VIEW.height + 40, toScreenY(chaseFloor));
+            if (lavaY < VIEW.height + 40) {
+              const waveAmplitude = motion ? 4 : 0, waveSpeed = now / 220;
+              ctx.beginPath(); ctx.moveTo(0, VIEW.height + 2);
+              ctx.lineTo(0, lavaY + Math.sin(waveSpeed) * waveAmplitude);
+              const steps = 10;
+              for (let index = 0; index <= steps; index++) {
+                const wx = (VIEW.width / steps) * index;
+                ctx.lineTo(wx, lavaY + Math.sin(waveSpeed + index * 0.9) * waveAmplitude);
+              }
+              ctx.lineTo(VIEW.width, VIEW.height + 2); ctx.closePath();
+              const lava = ctx.createLinearGradient(0, lavaY - 20, 0, VIEW.height + 2);
+              lava.addColorStop(0, "rgba(204,255,0,0.85)"); lava.addColorStop(0.3, "rgba(10,20,6,0.95)"); lava.addColorStop(1, "#060606");
+              ctx.fillStyle = lava; ctx.fill();
+              ctx.strokeStyle = NEON; ctx.lineWidth = 2; ctx.globalAlpha = 0.9;
+              ctx.beginPath();
+              for (let index = 0; index <= steps; index++) {
+                const wx = (VIEW.width / steps) * index, wy = lavaY + Math.sin(waveSpeed + index * 0.9) * waveAmplitude;
+                if (index === 0) ctx.moveTo(wx, wy); else ctx.lineTo(wx, wy);
+              }
+              ctx.stroke(); ctx.globalAlpha = 1;
+            }
+          } else {
+            // No chase: the plain FALL_MARGIN death boundary, same as before — with CAMERA_ANCHOR derived from
+            // FALL_MARGIN, height == peakHeight - FALL_MARGIN always maps to exactly VIEW.height, the very
+            // bottom row of the canvas, so this fixed-position band IS the death line, not an approximation.
+            const fogHeight = 70;
+            const fog = ctx.createLinearGradient(0, VIEW.height - fogHeight, 0, VIEW.height);
+            fog.addColorStop(0, "rgba(6,6,6,0)"); fog.addColorStop(1, "rgba(6,6,6,0.55)");
+            ctx.fillStyle = fog; ctx.fillRect(0, VIEW.height - fogHeight, VIEW.width, fogHeight);
+            ctx.strokeStyle = NEON; ctx.globalAlpha = 0.7; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(0, VIEW.height - 2); ctx.lineTo(VIEW.width, VIEW.height - 2); ctx.stroke();
+            ctx.globalAlpha = 1;
+          }
+        }
+        if (run && run.shake > 0) ctx.restore(); // matches the ctx.save()+translate opened above, before any of this frame's world drawing
+        if (run && run.hitFlash > 0) {
+          // A brief full-canvas color flash on a hit/death, drawn in fixed screen space (after the shake's own
+          // restore above) so it never gets an edge gap from the shake offset.
+          run.hitFlash = Math.max(0, run.hitFlash - dt / 0.25);
+          ctx.globalAlpha = run.hitFlash * 0.5; ctx.fillStyle = "#eafff0";
+          ctx.fillRect(0, 0, VIEW.width, VIEW.height); ctx.globalAlpha = 1;
         }
         // ~10 updates/second is plenty for a number that only needs to look alive, and far cheaper than a
         // React re-render on every one of these (up to 60/second).
@@ -497,6 +675,22 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
           // because only the (unrelated-looking) star count ticked up — showing the number the popup actually
           // added to makes the payoff visible immediately, the same number the result screen settles on.
           scoreLabel.current.textContent = `Score ${run ? scoreOf(run.state) : 0} · ★${run ? run.state.stars : 0}`;
+          // Race HUD: rank among every ghost sharing the screen right now (bot + own past runs + any pasted
+          // code) plus a direct delta against the bot specifically, since the bot is always present and is
+          // the one opponent every player has in common — purely presentational, never read by tower.ts.
+          if (raceLabel.current) {
+            if (run && live.current.raceHudOn) {
+              const ghosts = [run.bot, run.imported, ...run.own].filter((value): value is Ghost => Boolean(value));
+              const you = scoreOf(run.state), botScore = scoreOf(run.bot.state);
+              const ranked = [you, ...ghosts.map(ghost => scoreOf(ghost.state))].sort((a, b) => b - a);
+              const rank = ranked.indexOf(you) + 1;
+              const delta = you - botScore;
+              const place = rank === 1 ? "1st" : rank === 2 ? "2nd" : rank === 3 ? "3rd" : `${rank}th`;
+              raceLabel.current.textContent = `${place} of ${ranked.length} · bot ${delta >= 0 ? "+" : ""}${delta}`;
+            } else {
+              raceLabel.current.textContent = "";
+            }
+          }
         }
         node.dataset.x = run ? run.state.x.toFixed(1) : "";
         node.dataset.height = run ? run.state.height.toFixed(1) : "0";
@@ -542,7 +736,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
   function loadImportedCode() {
     try {
       const decoded = decodeRun(importCode);
-      setImportedGhost({ seed: decoded.seed, transitions: decoded.transitions, score: decoded.claimedScore });
+      setImportedGhost({ seed: decoded.seed, transitions: decoded.transitions, score: decoded.claimedScore, rules: decoded.rules });
       setImportError(decoded.seed === seed ? "" : "That code is from a different tower; pick the matching tower to race it.");
     } catch (error) { setImportError(error instanceof Error ? error.message : "That code could not be read."); }
   }
@@ -556,8 +750,14 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
   return <section className="fc-game" aria-label="Friend Climb">
     <div className="fc-top" inert={paused || undefined}>
       {screen === "play" ? <span ref={scoreLabel}>Score 0</span> : <span>Friend Climb</span>}
+      {screen === "play" && raceHudOn && <span ref={raceLabel} style={{ marginRight: 0 }} />}
       <button type="button" aria-pressed={!muted} disabled={Boolean(status)} onClick={() => {
-        const next = !muted; setMuted(next); sound.current?.setMuted(next); if (!next) void sound.current?.unlock();
+        const next = !muted; setMuted(next); sound.current?.setMuted(next);
+        if (!next) {
+          void sound.current?.unlock();
+          // Same user-gesture requirement as the SDK's own sound kit — created once, on the first unmute.
+          if (!music.current.ctx) music.current.ctx = new (window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+        }
       }}>{muted ? "Sound off" : "Sound on"}</button>
       <button type="button" disabled={Boolean(status)} onClick={() => setMenu("settings")}>Settings</button>
     </div>
@@ -588,7 +788,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
       <p>Land on a star for +{STAR_POINTS}; chain stars with no plain landing between for a growing combo bonus.
         Zigzag-marked platforms are springs — they launch you higher than a normal bounce.</p>
       <button type="button" disabled={paused} onClick={() => startGame(todaySeed())}>Tower of the day</button>
-      <button type="button" disabled={paused} onClick={() => startGame(randomSeed())}>Practice (new tower)</button>
+      <button type="button" disabled={paused} onClick={() => startGame(platform.randomness.nextSeed())}>Practice (new tower)</button>
       <p className="fc-note">Progress and ghosts last only for this open session — closing or reloading the page clears them. There is no save yet.</p>
       <label className="fc-import">
         Race a friend's code
@@ -614,9 +814,16 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     </div>}
 
     {menu === "settings" && <GameMenu title="Settings" onClose={() => setMenu(null)}>
+      {/* Kept deliberately short: the SDK's own Settings dialog cannot be given a safe-zone the way this
+          game's own screens were (see style.css's --fc-safe-zone comment) — its content simply has to stay
+          short enough not to reach the SDK toolbar's region in the first place, on any screen size. */}
       <label><input type="checkbox" checked={reducedMotion} disabled={paused} onChange={event => setReducedMotion(event.target.checked)} /> Reduce motion</label>
-      <p>Turns off landing squash-and-stretch and bounce sparks; never changes the physics or score.</p>
-      <p>Ghosts (your past runs, the bot and any pasted code) are presentation only — they cannot affect your run. The bot is always labeled "bot", never a Friend.</p>
+      <label><input type="checkbox" checked={chaseOn} disabled={paused} onChange={event => setChaseOn(event.target.checked)} /> Chase</label>
+      <label><input type="checkbox" checked={dronesOn} disabled={paused} onChange={event => setDronesOn(event.target.checked)} /> Drones</label>
+      <label><input type="checkbox" checked={powerupsOn} disabled={paused} onChange={event => setPowerupsOn(event.target.checked)} /> Power-ups</label>
+      <label><input type="checkbox" checked={raceHudOn} disabled={paused} onChange={event => setRaceHudOn(event.target.checked)} /> Race HUD</label>
+      <label><input type="checkbox" checked={fxOn} disabled={paused} onChange={event => setFxOn(event.target.checked)} /> Music &amp; FX</label>
+      <p className="fc-note">Each toggle is snapshotted into the run and its FC4 code, so a replay always matches how it was recorded.</p>
       <button type="button" disabled={paused} onClick={() => setMenu(null)}>Back</button>
     </GameMenu>}
   </section>;

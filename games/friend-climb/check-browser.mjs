@@ -114,9 +114,9 @@ try {
     assert.match(await child.locator('.fc-top').textContent(), /Friend Climb/);
 
     // Race a friend's code: a mismatched-tower code shows a clear warning, garbage shows a decode error, and
-    // codes from either pre-fix version (FC1's star-scoring bug, FC2's missing springs/combo bonus) are
-    // refused by name instead of being replayed to a wrong score.
-    await child.getByLabel("Race a friend's code").fill('FC3.9999.3R!a');
+    // codes from any pre-fix version (FC1's star-scoring bug, FC2's missing springs/combo bonus, FC3's
+    // missing chase/drones/power-ups) are refused by name instead of being replayed to a wrong score.
+    await child.getByLabel("Race a friend's code").fill('FC4.79999.3R!a');
     await child.getByRole('button', { name: 'Load' }).click();
     await child.getByText('different tower', { exact: false }).waitFor();
     await child.getByLabel("Race a friend's code").fill('not a real code');
@@ -126,6 +126,9 @@ try {
     await child.getByRole('button', { name: 'Load' }).click();
     await child.getByText('older version', { exact: false }).waitFor();
     await child.getByLabel("Race a friend's code").fill('FC2.5.3R!a');
+    await child.getByRole('button', { name: 'Load' }).click();
+    await child.getByText('older version', { exact: false }).waitFor();
+    await child.getByLabel("Race a friend's code").fill('FC3.5.3R!a');
     await child.getByRole('button', { name: 'Load' }).click();
     await child.getByText('older version', { exact: false }).waitFor();
     await child.getByLabel("Race a friend's code").fill('');
@@ -207,7 +210,7 @@ try {
     assert.equal(total, heightPoints + starPoints, 'the breakdown must add up to the total');
     assert.equal(total, score, 'the breakdown total must match the score heading');
     const code = await child.getByLabel('Run code to share').inputValue();
-    assert.match(code, /^FC3\.[0-9a-z]+\.[0-9a-zLNR]*![0-9a-z]+$/, 'The shared run code has the expected shape');
+    assert.match(code, /^FC4\.[0-7][0-9a-z]+\.[0-9a-zLNR]*![0-9a-z]+$/, 'The shared run code has the expected shape');
     await assertBounds(page); await gameBounds(child);
 
     // Clipboard access may or may not be granted inside the sandboxed frame; either outcome must be handled.
@@ -216,10 +219,14 @@ try {
     if (copied !== code) await child.getByText('select the code above', { exact: false }).waitFor();
 
     // A second run must start with the Friend visible again, not scrolled off by a stale camera left over
-    // from how high the first run climbed (the bug the builder found and fixed after playtesting).
-
+    // from how high the first run climbed (the bug the builder found and fixed after playtesting). Polling
+    // data-screen directly, not waiting for a "Score 0" HUD text: with real physics already running the
+    // instant the run starts, peakHeight (and so the score) can climb past 0 within just a couple of the
+    // HUD's own ~100ms-throttled updates — a real but genuinely transient value a text-based wait can race
+    // past and miss entirely, which is exactly what made this assertion itself flaky, not a game bug.
     await child.getByRole('button', { name: 'Play this tower again' }).click();
-    await child.getByText(/^Score 0/).waitFor();
+    for (let waited = 0; waited < 5000 && (await canvas.getAttribute('data-screen')) !== 'play'; waited += 50) await page.waitForTimeout(50);
+    assert.equal(await canvas.getAttribute('data-screen'), 'play', 'the second run must actually start');
     await page.waitForTimeout(150);
     const playerY = Number(await canvas.getAttribute('data-player-screen-y'));
     assert(playerY >= 0 && playerY <= 640, `The Friend must render inside the canvas on a second run (got screen y ${playerY})`);
@@ -269,7 +276,10 @@ try {
     await child.getByRole('button', { name: 'Practice (new tower)' }).focus();
     await page.keyboard.press('Enter');
     await canvas.waitFor();
-    await child.getByText(/^Score 0/).waitFor();
+    // See the earlier comment on the same pattern: data-screen, not a "Score 0" HUD text that can come and go
+    // within a single throttle window before a text-based wait ever gets a chance to see it.
+    for (let waited = 0; waited < 5000 && (await canvas.getAttribute('data-screen')) !== 'play'; waited += 50) await page.waitForTimeout(50);
+    assert.equal(await canvas.getAttribute('data-screen'), 'play', 'the keyboard-started run must actually start');
     const beforeKeyboardStartX = Number(await canvas.getAttribute('data-x'));
     await page.keyboard.down('ArrowLeft');
     await page.waitForTimeout(300);

@@ -43,25 +43,40 @@ test("encoding and decoding a run recovers the exact transitions and replays to 
 
 test("a run code with no direction changes at all still round-trips", () => {
   const code = tower.encodeRun(42, [], 0);
-  assert.deepEqual(tower.decodeRun(code), { seed: 42, transitions: [], claimedScore: 0 });
+  assert.deepEqual(tower.decodeRun(code), { seed: 42, transitions: [], claimedScore: 0, rules: tower.DEFAULT_RULES });
+});
+
+test("a run code carries which optional mechanics were active, round-tripping exactly", () => {
+  for (const rules of [
+    { chase: false, drones: false, powerups: false },
+    { chase: true, drones: false, powerups: true },
+    { chase: false, drones: true, powerups: false },
+    tower.DEFAULT_RULES,
+  ]) {
+    const code = tower.encodeRun(7, [{ tick: 5, dir: 1 }], 100, rules);
+    assert.deepEqual(tower.decodeRun(code).rules, rules, `rules did not round-trip for ${JSON.stringify(rules)}`);
+  }
 });
 
 test("decoding rejects text that is not a Friend Climb code", () => {
   assert.throws(() => tower.decodeRun("not a code"), /does not look like/);
-  assert.throws(() => tower.decodeRun("FC3.5.3L!x!y"), /does not look like/);
+  assert.throws(() => tower.decodeRun("FC4.75.3L!x!y"), /does not look like/);
   // "LL" is inside the loose outer shape (only 0-9, a-z, L, N, R are allowed) but has no digits before
   // either letter, so the token scanner can match neither — exercises the leftover-character check.
-  assert.throws(() => tower.decodeRun("FC3.5.LL!a"), /unreadable characters/);
+  assert.throws(() => tower.decodeRun("FC4.75.LL!a"), /unreadable characters/);
 });
 
 test("decoding rejects an old code by name instead of silently replaying it to a different score", () => {
-  // v1 (FC1) paid out a star on every bounce off a star platform, not once, and v2 (FC2) had no springs or
-  // combo bonus; neither version's claimed scores are reproducible under the current logic, so both must be
-  // refused with their own specific message, not treated as generic garbage or replayed to a wrong number.
+  // v1 (FC1) paid out a star on every bounce off a star platform, not once; v2 (FC2) had no springs or combo
+  // bonus; v3 (FC3) had no chase, drones or power-ups. None of their claimed scores are reproducible under
+  // the current logic, so all three must be refused with their own specific message, not treated as generic
+  // garbage or replayed to a wrong number.
   assert.throws(() => tower.decodeRun("FC1.5.3L!a"), /older version/);
   assert.throws(() => tower.decodeRun("FC1.5.3L!a"), error => !/does not look like/.test(error.message));
   assert.throws(() => tower.decodeRun("FC2.5.3L!a"), /older version/);
   assert.throws(() => tower.decodeRun("FC2.5.3L!a"), error => !/does not look like/.test(error.message));
+  assert.throws(() => tower.decodeRun("FC3.5.3L!a"), /older version/);
+  assert.throws(() => tower.decodeRun("FC3.5.3L!a"), error => !/does not look like/.test(error.message));
 });
 
 test("a star only pays out once, even when the same platform is bounced on many times", () => {
@@ -70,8 +85,8 @@ test("a star only pays out once, even when the same platform is bounced on many 
   // correct property of zero input — see the "holding one direction" test above), so this directly exercises
   // many repeat bounces off one star platform, which is exactly what the bug paid out on every time.
   const oneStarTower = Object.freeze({
-    seed: 0, windBands: Object.freeze([]),
-    platforms: Object.freeze([{ x: 150, height: 0, width: 90, breaking: false, star: true, spring: false }]),
+    seed: 0, windBands: Object.freeze([]), drones: Object.freeze([]),
+    platforms: Object.freeze([{ x: 150, height: 0, width: 90, breaking: false, star: true, spring: false, powerup: null }]),
   });
   let state = tower.startRun(), bounces = 0;
   for (let tick = 0; tick < 600 && bounces < 8; tick++) {
@@ -107,6 +122,11 @@ test("the screen's bottom edge lines up exactly with the FALL_MARGIN death bound
   // FALL_MARGIN distance from a dead stop at the peak reaches sqrt(2 * GRAVITY * FALL_MARGIN) px/s, times one
   // tick's duration, plus slack for the peak itself not landing exactly on a tick boundary.
   const maxOvershootPerTick = Math.sqrt(2 * tower.GRAVITY * tower.FALL_MARGIN) * tower.DT + 15;
+  // Chase and drones each introduce their own, independent way to die (an absolute rising floor; a hard
+  // instantaneous knockdown) that this specific FALL_MARGIN-only formula does not model — index.tsx's own
+  // camera formula accounts for the chase separately (see its own comment), and that combination is checked
+  // on its own below; this test stays focused on the plain FALL_MARGIN boundary alone, as it always has.
+  const rules = { chase: false, drones: false, powerups: true };
   for (let seed = 1; seed <= 30; seed++) {
     const towerData = tower.generateTower(seed);
     const random = tower.seeded(seed * 97 + 11);
@@ -118,7 +138,7 @@ test("the screen's bottom edge lines up exactly with the FALL_MARGIN death bound
       assert(screenY(state.height, state.peakHeight) <= tower.REFERENCE_HEIGHT + 1e-6,
         `seed ${seed}, tick ${tick}: an alive frame is already below the visible bottom edge`);
       const previous = state;
-      state = tower.step(towerData, state, dir);
+      state = tower.step(towerData, state, dir, rules);
       if (!state.alive) diedAt = { before: previous, after: state };
     }
     assert(diedAt, `seed ${seed}: never died within the tick limit — this scenario did not exercise death`);
@@ -163,16 +183,23 @@ test("a run never collects more stars than exist among the platforms it actually
   }
 });
 
-test("the ghost bot is deterministic and is always beatable, never a guaranteed win or a guaranteed loss", () => {
-  let wins = 0, losses = 0;
+test("the ghost bot is deterministic and does not meet the exact same fate on every seed", () => {
+  // With the chase on (the default rules), surviving all the way to the tick cap is no longer a meaningful
+  // "win" to check for — the chase is specifically designed so nobody can stall indefinitely, bot included,
+  // so it is expected to eventually fall on essentially every seed now. What still matters, and is still
+  // worth proving, is that the bot is not a scripted, identical failure every time: some seeds genuinely give
+  // it a much harder or easier time than others, which is what makes it a credible opponent rather than a
+  // fixed timer dressed up as one.
+  const ticksSurvived = [];
   for (let seed = 1; seed <= 100; seed++) {
     const a = tower.botRun(seed), b = tower.botRun(seed);
     assert.equal(a.result.score, b.result.score, `seed ${seed}: the bot's own run is not reproducible`);
     assert.deepEqual(a.transitions, b.transitions);
-    if (a.result.ticks < 60 * 180) losses++; else wins++;
+    ticksSurvived.push(a.result.ticks);
   }
-  assert(losses > 0, "the bot never falls off in 100 seeds — it would be an unbeatable opponent");
-  assert(wins > 0, "the bot always falls off in 100 seeds — matches would never have a lasting opponent");
+  const min = Math.min(...ticksSurvived), max = Math.max(...ticksSurvived);
+  assert(min < max * 0.5,
+    `expected meaningfully different outcomes across seeds (shortest ${min} ticks, longest ${max} ticks) — not a fixed, scripted fate`);
 });
 
 test("score counts height in ten-pixel steps plus star points earned", () => {
@@ -185,8 +212,8 @@ test("a spring platform launches the Friend higher than a normal bounce", () => 
   // horizontal input the Friend keeps bouncing on this exact platform, so its peak height after one bounce
   // is a direct, uncontaminated reading of that platform's launch velocity.
   const springTower = Object.freeze({
-    seed: 0, windBands: Object.freeze([]),
-    platforms: Object.freeze([{ x: 150, height: 0, width: 90, breaking: false, star: false, spring: true }]),
+    seed: 0, windBands: Object.freeze([]), drones: Object.freeze([]),
+    platforms: Object.freeze([{ x: 150, height: 0, width: 90, breaking: false, star: false, spring: true, powerup: null }]),
   });
   // startRun() begins already mid-air at normal BOUNCE_VELOCITY (as if just off the spawn platform), so the
   // first landing on the spring only happens after that first ordinary arc finishes; run long enough to cover
@@ -205,14 +232,14 @@ test("consecutive star landings earn a growing combo bonus, which a plain landin
   // then one plain platform, then one more star platform. This scripts an exact, deterministic sequence of
   // landings to check the combo formula step by step.
   const platforms = [
-    { x: 150, height: 0, width: 90, breaking: false, star: false, spring: false },
-    { x: 150, height: 100, width: 90, breaking: false, star: true, spring: false },
-    { x: 150, height: 200, width: 90, breaking: false, star: true, spring: false },
-    { x: 150, height: 300, width: 90, breaking: false, star: true, spring: false },
-    { x: 150, height: 400, width: 90, breaking: false, star: false, spring: false },
-    { x: 150, height: 500, width: 90, breaking: false, star: true, spring: false },
+    { x: 150, height: 0, width: 90, breaking: false, star: false, spring: false, powerup: null },
+    { x: 150, height: 100, width: 90, breaking: false, star: true, spring: false, powerup: null },
+    { x: 150, height: 200, width: 90, breaking: false, star: true, spring: false, powerup: null },
+    { x: 150, height: 300, width: 90, breaking: false, star: true, spring: false, powerup: null },
+    { x: 150, height: 400, width: 90, breaking: false, star: false, spring: false, powerup: null },
+    { x: 150, height: 500, width: 90, breaking: false, star: true, spring: false, powerup: null },
   ];
-  const scriptedTower = Object.freeze({ seed: 0, windBands: Object.freeze([]), platforms: Object.freeze(platforms) });
+  const scriptedTower = Object.freeze({ seed: 0, windBands: Object.freeze([]), drones: Object.freeze([]), platforms: Object.freeze(platforms) });
   let state = tower.startRun();
   const comboStreaksAtEachStarLanding = [];
   let previousStars = state.stars;
@@ -224,4 +251,116 @@ test("consecutive star landings earn a growing combo bonus, which a plain landin
   const bonusForStreak = streak => tower.STAR_POINTS + Math.min(streak - 1, tower.COMBO_BONUS_MAX_STEPS) * tower.COMBO_BONUS_PER_STEP;
   const expectedStarPoints = [1, 2, 3, 1].reduce((total, streak) => total + bonusForStreak(streak), 0);
   assert.equal(state.starPoints, expectedStarPoints, "total star points must match the combo bonus formula applied at each landing");
+});
+
+test("the chase eventually kills a Friend who stays at a safe, unmoving height, when enabled", () => {
+  const oneTower = Object.freeze({
+    seed: 0, windBands: Object.freeze([]), drones: Object.freeze([]),
+    platforms: Object.freeze([{ x: 150, height: 0, width: 90, breaking: false, star: false, spring: false, powerup: null }]),
+  });
+  const rules = { chase: true, drones: false, powerups: false };
+  let state = tower.startRun();
+  // Comfortably inside the grace period, chaseHeight is still exactly 0, so ordinary safe bouncing on the
+  // same platform forever (which revisits height 0 on every landing) must not be touched by it at all yet.
+  for (let tick = 0; tick < tower.CHASE_GRACE_TICKS - 60 && state.alive; tick++) state = tower.step(oneTower, state, 0, rules);
+  assert(state.alive, "the chase must not have caught up at all yet, comfortably inside its own grace period");
+  for (let tick = 0; tick < 60 * 90 && state.alive; tick++) state = tower.step(oneTower, state, 0, rules);
+  assert.equal(state.alive, false, "a Friend bouncing on the exact same platform forever must eventually be caught by the rising chase");
+});
+
+test("the chase never fires at all when disabled, even far past when it would otherwise have caught up", () => {
+  const oneTower = Object.freeze({
+    seed: 0, windBands: Object.freeze([]), drones: Object.freeze([]),
+    platforms: Object.freeze([{ x: 150, height: 0, width: 90, breaking: false, star: false, spring: false, powerup: null }]),
+  });
+  const rules = { chase: false, drones: false, powerups: false };
+  let state = tower.startRun();
+  for (let tick = 0; tick < 60 * 90; tick++) state = tower.step(oneTower, state, 0, rules);
+  assert.equal(state.alive, true, "with the chase off, bouncing in place forever must stay exactly as safe as it always was");
+});
+
+test("a drone never blocks the whole lane — a gap always exists regardless of seed or oscillation phase", () => {
+  // Purely geometric and seed-independent: a drone's own width (2*DRONE_RADIUS) plus the Friend's own
+  // diameter (2*PLAYER_RADIUS) must stay well under the full wrapped lane width, so some horizontal gap
+  // always exists no matter where in its oscillation the drone currently is or what seed generated it.
+  const blockedWidth = 2 * (tower.DRONE_RADIUS + tower.PLAYER_RADIUS);
+  assert(blockedWidth < tower.WORLD_WIDTH, `a drone+Friend together (${blockedWidth}) must stay under the lane width (${tower.WORLD_WIDTH})`);
+  let sawADrone = false;
+  for (const seed of [1, 2, 3, 2026]) {
+    const { drones } = tower.generateTower(seed);
+    if (drones.length > 0) sawADrone = true;
+    for (const drone of drones) assert(drone.height > tower.DRONE_START_HEIGHT, `seed ${seed}: a drone exists below the documented grace zone`);
+  }
+  assert(sawADrone, "expected at least one of the checked seeds to generate a drone");
+});
+
+test("a drone hit knocks the Friend down hard and starts a cooldown, not a repeat hit on every overlapping tick", () => {
+  const droneTower = Object.freeze({
+    seed: 0, windBands: Object.freeze([]),
+    platforms: Object.freeze([{ x: 150, height: 0, width: 90, breaking: false, star: false, spring: false, powerup: null }]),
+    // Stationary (amplitude 0) right in the Friend's own unmoving path, at a height its bounce comfortably
+    // reaches — so a hit is not a matter of luck, and the test's own count of "how many times the bounce
+    // crossed this height" is simple to reason about.
+    drones: Object.freeze([{ height: 80, x0: 150, amplitude: 0, periodTicks: 100, phase: 0 }]),
+  });
+  const rules = { chase: false, drones: true, powerups: false };
+  let state = tower.startRun(), hits = 0, crossings = 0, wasAbove = state.height >= 80;
+  for (let tick = 0; tick < 400; tick++) {
+    const previousCooldown = state.droneCooldown;
+    const isAbove = state.height >= 80;
+    if (isAbove !== wasAbove) { crossings++; wasAbove = isAbove; }
+    state = tower.step(droneTower, state, 0, rules);
+    if (previousCooldown === 0 && state.droneCooldown === tower.DRONE_HIT_COOLDOWN_TICKS) hits++;
+  }
+  assert(crossings >= 4, `expected the bounce to cross height 80 several times in 400 ticks, got ${crossings}`);
+  assert(hits >= 1, "expected at least one drone hit in 400 ticks of crossing right through it");
+  assert(hits < crossings, `the cooldown must suppress at least some repeat hits (got ${hits} hits across ${crossings} crossings)`);
+});
+
+test("a rocket power-up launches far higher than even a spring, for its own fixed duration", () => {
+  const rocketTower = Object.freeze({
+    seed: 0, windBands: Object.freeze([]), drones: Object.freeze([]),
+    platforms: Object.freeze([{ x: 150, height: 0, width: 90, breaking: false, star: false, spring: false, powerup: "rocket" }]),
+  });
+  const rules = { chase: false, drones: false, powerups: true };
+  let state = tower.startRun();
+  // One ordinary arc to actually land on the platform and trigger the rocket, plus comfortably more than its
+  // own fixed duration for the climb itself.
+  const ticksNeeded = Math.ceil(tower.BOUNCE_AIR_TIME / tower.DT) + tower.ROCKET_DURATION_TICKS + 30;
+  for (let tick = 0; tick < ticksNeeded; tick++) state = tower.step(rocketTower, state, 0, rules);
+  const springLikeBound = tower.SPRING_VELOCITY ** 2 / (2 * tower.GRAVITY); // the highest even a spring could reach
+  assert(state.peakHeight > springLikeBound, `expected a rocket to climb past a spring's own bound (${springLikeBound.toFixed(0)}), got ${state.peakHeight.toFixed(0)}`);
+});
+
+test("a shield cancels exactly one otherwise-fatal fall, then is gone", () => {
+  const emptyTower = Object.freeze({ seed: 0, windBands: Object.freeze([]), drones: Object.freeze([]), platforms: Object.freeze([]) });
+  const rules = { chase: false, drones: false, powerups: true };
+  // Crafted one tick away from crossing peakHeight - FALL_MARGIN, with a shield already held — exercises the
+  // save in isolation rather than hoping a scripted bounce sequence happens to land on the exact fatal tick.
+  let state = { ...tower.startRun(), peakHeight: 1000, height: 1000 - tower.FALL_MARGIN + 1, vy: -50, shield: true };
+  state = tower.step(emptyTower, state, 0, rules);
+  assert.equal(state.alive, true, "the shield must cancel the first otherwise-fatal fall");
+  assert.equal(state.shield, false, "the shield must be consumed after saving the run once");
+  let dead = false;
+  for (let tick = 0; tick < 200 && !dead; tick++) { state = tower.step(emptyTower, state, 0, rules); if (!state.alive) dead = true; }
+  assert(dead, "without a shield left, falling through open air with nothing to land on must actually end the run");
+});
+
+test("a magnet collects a star the Friend's own path never actually lands on", () => {
+  // The Friend's x never moves at all with zero input (no drift, see "holding one direction" above for why
+  // that is itself fine), so a platform offset sideways is permanently out of landing range but can still be
+  // within magnet range — isolates the magnet's own effect instead of needing to script a precise path to it.
+  const platforms = [
+    { x: 150, height: 0, width: 90, breaking: false, star: false, spring: false, powerup: "magnet" },
+    { x: 200, height: 80, width: 10, breaking: false, star: true, spring: false, powerup: null }, // 50px away: unreachable by landing (needs <=19px), reachable by magnet (<=70px)
+  ];
+  const magnetTower = Object.freeze({ seed: 0, windBands: Object.freeze([]), drones: Object.freeze([]), platforms: Object.freeze(platforms) });
+  let withMagnet = tower.startRun(), withoutMagnet = tower.startRun();
+  const withRules = { chase: false, drones: false, powerups: true }, withoutRules = { chase: false, drones: false, powerups: false };
+  for (let tick = 0; tick < 150; tick++) {
+    withMagnet = tower.step(magnetTower, withMagnet, 0, withRules);
+    withoutMagnet = tower.step(magnetTower, withoutMagnet, 0, withoutRules);
+  }
+  assert.equal(withoutMagnet.stars, 0, "the star is offset far enough that a normal landing must never reach it");
+  assert(withMagnet.stars >= 1, "a magnet must auto-collect the same star without ever landing on it");
 });
