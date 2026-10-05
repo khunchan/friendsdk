@@ -49,6 +49,12 @@
 .fc-import{display:flex;flex-direction:column;gap:6px;width:min(320px,100%)}
 .fc-import input{font:inherit;padding:8px;border:2px solid #ccff00;background:#0c0c0c;color:#eafff0;width:100%;box-sizing:border-box}
 .fc-import input::placeholder{color:#5a7a4a}
+/* The session Stats table: narrow enough at 360px to stay readable without wrapping every cell, with its own
+   horizontal scroll (inherited from .fc-result's overflow:auto) as the fallback rather than squeezing text
+   further. Borders stay inside the black/green/white palette, same as every other screen. */
+.fc-stats table{border-collapse:collapse;font-size:12px;max-width:100%}
+.fc-stats th,.fc-stats td{border:1px solid rgba(204,255,0,.35);padding:4px 7px;white-space:nowrap}
+.fc-stats th{color:#ccff00}
 @media(max-width:520px){
   .fc-top{inset:6px 6px auto;gap:4px;font-size:9px}
   .fc-top button{padding:4px 6px;min-height:0;white-space:nowrap}

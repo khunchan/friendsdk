@@ -38,7 +38,7 @@ const todaySeed = () => seedForDate(new Date().toISOString().slice(0, 10));
 
 type Ghost = Readonly<{ label: string; color: string; tower: Tower; transitions: readonly Transition[]; rules: RunRules; dir: Dir; state: RunState; index: number; starFlash: number }>;
 type RunRecord = Readonly<{ seed: number; transitions: readonly Transition[]; score: number; rules: RunRules }>;
-type Screen = "pick" | "play" | "result";
+type Screen = "pick" | "play" | "result" | "stats";
 type Particle = { x: number; y: number; vx: number; vy: number; life: number; color: string };
 type Popup = { x: number; y: number; life: number; text: string };
 
@@ -66,12 +66,73 @@ function wrappedScreenXs(x: number, laneMargin: number): number[] {
   if (x > WORLD_WIDTH - PLAYER_RADIUS) xs.push(laneMargin + x - WORLD_WIDTH);
   return xs;
 }
+/** A drone's full patrol reach (x0 ± amplitude) can span the lane's own left/right wrap boundary, the same
+ * way the player's own position does — splits into two fill() rects when it does, rather than drawing a band
+ * that silently wraps around the wrong way. rawLeft/rawRight are raw (unwrapped) world x; rawRight - rawLeft
+ * is always <= WORLD_WIDTH (drones never patrol more than half the lane — see DRONE_RADIUS's comment). */
+function fillWrappedBand(ctx: CanvasRenderingContext2D, laneMargin: number, rawLeft: number, rawRight: number, y: number, height: number) {
+  const left = ((rawLeft % WORLD_WIDTH) + WORLD_WIDTH) % WORLD_WIDTH, width = rawRight - rawLeft;
+  if (left + width <= WORLD_WIDTH) { ctx.fillRect(laneMargin + left, y, width, height); return; }
+  const firstWidth = WORLD_WIDTH - left;
+  ctx.fillRect(laneMargin + left, y, firstWidth, height);
+  ctx.fillRect(laneMargin, y, width - firstWidth, height);
+}
+/** A spinning, spiked hazard — deliberately nothing like the smooth rounded rectangles every platform uses,
+ * so a drone reads as dangerous at a glance instead of blending in as "one more platform with a dot on it"
+ * (a real playtest report). Rotation and a pulsing core both run off `now` so it visibly spins/blinks even
+ * while the drone itself isn't moving sideways; `hit` swaps the core to a dim color during its own cooldown,
+ * same meaning as before, just on a shape that actually looks like a hazard. */
+function drawDroneHazard(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius: number, now: number, hit: boolean) {
+  const spikes = 8, rotation = (now / 650) % (Math.PI * 2);
+  ctx.save();
+  ctx.translate(cx, cy); ctx.rotate(rotation);
+  ctx.fillStyle = NEON;
+  for (let index = 0; index < spikes; index++) {
+    const angle = ((Math.PI * 2) / spikes) * index, perp = angle + Math.PI / 2, spread = radius * 0.22;
+    const innerX = Math.cos(angle) * radius * 0.5, innerY = Math.sin(angle) * radius * 0.5;
+    const outerX = Math.cos(angle) * radius, outerY = Math.sin(angle) * radius;
+    ctx.beginPath();
+    ctx.moveTo(innerX + Math.cos(perp) * spread, innerY + Math.sin(perp) * spread);
+    ctx.lineTo(outerX, outerY);
+    ctx.lineTo(innerX - Math.cos(perp) * spread, innerY - Math.sin(perp) * spread);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.fillStyle = "#000"; ctx.strokeStyle = NEON; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(0, 0, radius * 0.55, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  const blink = 0.55 + 0.45 * Math.sin(now / 90);
+  ctx.fillStyle = hit ? "rgba(204,255,0,0.35)" : `rgba(204,255,0,${blink.toFixed(2)})`;
+  ctx.beginPath(); ctx.arc(0, 0, radius * 0.22, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
 /** tick / 60 is the run's own deterministic elapsed time in seconds — never a wall-clock reading, so a climb
  * time is exactly reproducible from a replayed run code, same as the score is. */
 function formatClimbTime(ticks: number): string {
   const totalSeconds = Math.floor(ticks / 60);
   const minutes = Math.floor(totalSeconds / 60), seconds = totalSeconds % 60;
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+/** How a run ended, for the session Stats screen below — purely presentational, derived entirely from
+ * values tower.ts already exposes (never a new field tower.ts itself needs to track), so it can never
+ * disagree with what actually happened. Checked in this order: a summit is unambiguous; a drone hit is only
+ * credited as the cause if it happened on the exact same tick the run ended (not a few ticks earlier, which
+ * would really be "fell after a knockback"); otherwise, whichever boundary was actually binding at the final
+ * tick (the chase wave, if one was active and stricter, or the ordinary FALL_MARGIN one) decides. */
+type DeathCause = "fall" | "lava" | "drone" | "summit";
+function classifyEnd(run: Run): DeathCause {
+  const state = run.state;
+  if (state.summited) return "summit";
+  if (run.lastDroneHitTick === state.tick) return "drone";
+  if (run.rules.chase) {
+    const wave = chaseWaveFloor(state.waveIndex, state.waveTriggerTick, state.waveBaseHeight, state.tick);
+    if (wave.active && wave.floor > state.peakHeight - FALL_MARGIN) return "lava";
+  }
+  return "fall";
+}
+const CAUSE_LABEL: Record<DeathCause, string> = { fall: "Fell", lava: "Lava", drone: "Drone", summit: "Summit" };
+type RunStat = Readonly<{ score: number; heightPoints: number; stars: number; cause: DeathCause; ticks: number }>;
+function statsToText(stats: readonly RunStat[]): string {
+  const rows = stats.map((stat, index) => `${stats.length - index}\t${stat.score}\t${stat.heightPoints}\t${stat.stars}\t${CAUSE_LABEL[stat.cause]}\t${formatClimbTime(stat.ticks)}`);
+  return ["#\tScore\tHeight\tStars\tEnded by\tTime", ...rows].join("\n");
 }
 function spawnBurst(particles: Particle[], x: number, y: number, color: string, count: number) {
   for (let index = 0; index < count; index++) {
@@ -152,6 +213,19 @@ function playDroneAlert(ctx: AudioContext) {
     osc.connect(gain); gain.connect(ctx.destination);
     osc.start(now + offset); osc.stop(now + offset + 0.1);
   }
+}
+/** A short, repeatable blip for actually being close to a live (not on-cooldown) drone right now — distinct
+ * from playDroneAlert's one-shot two-note sting, and deliberately subtler/shorter so it can fire again every
+ * time the player re-enters danger range (see its own cooldown in the render loop) without becoming noise. */
+function playDroneProximity(ctx: AudioContext) {
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator(), gain = ctx.createGain();
+  osc.type = "square"; osc.frequency.setValueAtTime(520, now); osc.frequency.exponentialRampToValueAtTime(380, now + 0.08);
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(0.045, now + 0.008);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
+  osc.connect(gain); gain.connect(ctx.destination);
+  osc.start(now); osc.stop(now + 0.1);
 }
 /** A low, rising rumble for the chase's own grace period ending — one long tone, not a beat, so it reads as
  * an announcement rather than part of the music's own pulse. */
@@ -293,8 +367,14 @@ type Run = {
   // already fired, so a wave's ~1.5s warning window (chaseWaveFloor's own `warning` flag stays true the
   // whole window) triggers the banner/sound exactly once, not every frame it stays true — one per wave, not
   // one per run, since waves now recur. droneSpotted fires once per run the first time any drone is actually
-  // visible on screen, not merely generated into the tower.
-  lastWaveWarned: number; lavaFlash: number; droneSpotted: boolean;
+  // visible on screen, not merely generated into the tower. lastProximityAlertTick is its own cooldown (not
+  // one-shot — see the render loop) for the "close to a live drone right now" cue, which can and should fire
+  // again every time the player re-enters danger range.
+  lastWaveWarned: number; lavaFlash: number; droneSpotted: boolean; lastProximityAlertTick: number;
+  // Which tick (tower.ts's own, not a frame count) the live player's own run most recently took a drone hit
+  // on — used only to classify a run's ending for the session Stats screen (was this death caused by a hit
+  // the same tick, not a few ticks later from the knockback) — purely presentational, never read by tower.ts.
+  lastDroneHitTick: number;
 };
 
 export default function FriendClimb({ friendId, client, paused }: GameComponentProps) {
@@ -322,6 +402,10 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
   const [importCode, setImportCode] = useState(""), [importError, setImportError] = useState("");
   const [importedGhost, setImportedGhost] = useState<RunRecord | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
+  // This session's own runs (newest first), for the Stats screen below — purely so the player can read off
+  // (or copy, for sending elsewhere) real numbers for balance calibration; never persisted, same as ghosts.
+  const [sessionStats, setSessionStats] = useState<readonly RunStat[]>([]);
+  const [statsCopyFailed, setStatsCopyFailed] = useState(false);
   const [menu, setMenu] = useState<"settings" | null>(null), [muted, setMuted] = useState(true), [reducedMotion, setReducedMotion] = useState(false);
   // Every one of these is toggleable in Settings (default on) specifically so the user can compare what each
   // mechanic actually adds, one at a time — snapshotted into a RunRules at the moment a run starts (see
@@ -378,7 +462,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     runRef.current = {
       tower, state: startRun(), transitions: [], rules, lastDir: 0, bot, own, imported,
       particles: [], popups: [], starFlash: 0, milestoneZone: 0, milestoneFlash: 0, shake: 0, hitFlash: 0,
-      lastWaveWarned: 0, lavaFlash: 0, droneSpotted: false,
+      lastWaveWarned: 0, lavaFlash: 0, droneSpotted: false, lastProximityAlertTick: -Infinity, lastDroneHitTick: -Infinity,
     };
     setIsFirstRun(!playedBefore.current); playedBefore.current = true;
     setControlHintVisible(true);
@@ -397,6 +481,10 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     setBest(previous => ({ ...previous, [seed]: Math.max(previous[seed] ?? 0, score) }));
     setLastScore(score); setLastHeightPoints(Math.floor(state.peakHeight / HEIGHT_PER_POINT)); setLastStars(state.stars); setLastStarPoints(state.starPoints);
     setLastSummited(state.summited); setLastClimbTicks(state.tick);
+    if (run) {
+      const stat: RunStat = { score, heightPoints: Math.floor(state.peakHeight / HEIGHT_PER_POINT), stars: state.stars, cause: classifyEnd(run), ticks: state.tick };
+      setSessionStats(previous => [stat, ...previous]);
+    }
     setLastCode(encodeRun(seed, transitions, score, rules)); setCopyFailed(false); setScreen("result");
   }
 
@@ -491,6 +579,9 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             if (run.state.droneCooldown > 0 && previousCooldown === 0) {
               sound.current?.play("impact", { volume: 0.8 });
               if (!live.current.reducedMotion && live.current.fxOn) { run.shake = 1; run.hitFlash = 1; }
+              // Tracked only so endGame can tell "died from this exact hit's knockback" apart from an
+              // ordinary fall or an active lava wave, for the session Stats screen's "Ended by" column.
+              run.lastDroneHitTick = run.state.tick;
             }
             // Purely presentational milestone banner/zone tint, every MILESTONE_STEP points of the same
             // score the HUD shows ("Score N") — strictly in sync with it, not a separate height or distance
@@ -648,6 +739,8 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
           });
           // Drones: drawn only when the toggle that makes them actually dangerous is on — a visible-but-harmless
           // drone would just be confusing clutter, the opposite of what a toggle for comparing mechanics needs.
+          // A rounded rectangle with a dot used to read as "just another platform" (a real playtest report) —
+          // drawDroneHazard's spiked, spinning shape plus the patrol-band stripe below are the direct fix.
           if (run.rules.drones) {
             for (const drone of run.tower.drones) {
               const y = toScreenY(drone.height);
@@ -659,12 +752,29 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
                 run.droneSpotted = true;
                 if (music.current.ctx && live.current.fxOn && !live.current.muted) playDroneAlert(music.current.ctx);
               }
+              // Patrol-band highlight: a faint hazard-striped strip across the drone's FULL sweep at this
+              // height, not just wherever it happens to be this instant — the same stripe pattern a breaking
+              // platform already uses, reused rather than inventing a second "this is dangerous" visual, so
+              // the danger zone reads clearly even while the drone itself is elsewhere in its oscillation.
+              const bandHeight = DRONE_RADIUS * 1.5;
+              ctx.save(); ctx.globalAlpha = 0.5; ctx.fillStyle = hazardPattern;
+              fillWrappedBand(ctx, LANE_MARGIN, drone.x0 - drone.amplitude, drone.x0 + drone.amplitude, y - bandHeight / 2, bandHeight);
+              ctx.restore();
               const dx = LANE_MARGIN + droneX(drone, run.state.tick);
-              ctx.fillStyle = "#111"; ctx.strokeStyle = NEON; ctx.lineWidth = 2;
-              ctx.beginPath(); ctx.roundRect(dx - DRONE_RADIUS, y - DRONE_RADIUS * 0.6, DRONE_RADIUS * 2, DRONE_RADIUS * 1.2, 4);
-              ctx.fill(); ctx.stroke();
-              ctx.fillStyle = run.state.droneCooldown > 0 ? "rgba(204,255,0,0.4)" : NEON;
-              ctx.beginPath(); ctx.arc(dx, y, 3, 0, Math.PI * 2); ctx.fill();
+              drawDroneHazard(ctx, dx, y, DRONE_RADIUS, now, run.state.droneCooldown > 0);
+              // Proximity alert: distinct from the one-shot sighting sting above, fires (with its own
+              // cooldown, so it cannot spam while lingering nearby) whenever the live player's own position
+              // is actually close enough to a live (not cooling down) drone to be in real danger soon — not
+              // merely "a drone is visible somewhere on screen", which the sighting sting already covers.
+              const verticalGap = Math.abs(run.state.height - drone.height);
+              const rawDx = droneX(drone, run.state.tick) - run.state.x;
+              const wrappedDx = Math.min(Math.abs(rawDx), WORLD_WIDTH - Math.abs(rawDx));
+              const proximityRange = DRONE_RADIUS + PLAYER_RADIUS + 45;
+              if (run.state.droneCooldown === 0 && verticalGap < proximityRange && wrappedDx < proximityRange
+                  && run.state.tick - run.lastProximityAlertTick > 50) {
+                run.lastProximityAlertTick = run.state.tick;
+                if (music.current.ctx && live.current.fxOn && !live.current.muted) playDroneProximity(music.current.ctx);
+              }
             }
           }
           for (const ghost of [run.bot, run.imported, ...run.own].filter((value): value is Ghost => Boolean(value))) {
@@ -868,12 +978,14 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [friendId, revision]);
 
-  async function copyCode(code: string) {
+  async function copyText(text: string): Promise<boolean> {
     try {
       if (!navigator.clipboard) throw new Error("No Clipboard API");
-      await navigator.clipboard.writeText(code); setCopyFailed(false);
-    } catch { setCopyFailed(true); } // the sandboxed frame may not grant clipboard access; the code stays in a field to select by hand
+      await navigator.clipboard.writeText(text); return true;
+    } catch { return false; } // the sandboxed frame may not grant clipboard access; the caller keeps its own text visible to select by hand
   }
+  async function copyCode(code: string) { setCopyFailed(!(await copyText(code))); }
+  async function copyStats() { setStatsCopyFailed(!(await copyText(statsToText(sessionStats)))); }
   function loadImportedCode() {
     try {
       const decoded = decodeRun(importCode);
@@ -933,11 +1045,12 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
       <p className="fc-note">Progress and ghosts last only for this open session — closing or reloading the page clears them. There is no save yet.</p>
       <label className="fc-import">
         Race a friend's code
-        <input value={importCode} onChange={event => setImportCode(event.target.value)} placeholder="FC6...." disabled={paused} />
+        <input value={importCode} onChange={event => setImportCode(event.target.value)} placeholder="FC7...." disabled={paused} />
         <button type="button" disabled={paused || !importCode} onClick={loadImportedCode}>Load</button>
       </label>
       {importError && <p role="alert">{importError}</p>}
       {importedGhost && !importError && <p>Loaded a code for tower #{importedGhost.seed.toString(36)}. Start that tower to race it (today's tower and practice towers use different seeds).</p>}
+      {sessionStats.length > 0 && <button type="button" disabled={paused} onClick={() => setScreen("stats")}>Stats ({sessionStats.length})</button>}
     </div>}
 
     {!status && screen === "result" && <div className="fc-result">
@@ -948,12 +1061,32 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
       <p>Best this session on this tower: {best[seed] ?? lastScore}. Progress resets when this page reloads.</p>
       <button type="button" disabled={paused} onClick={() => startGame(seed)}>Play this tower again</button>
       <button type="button" disabled={paused} onClick={() => setScreen("pick")}>Back</button>
+      <button type="button" disabled={paused} onClick={() => setScreen("stats")}>Stats ({sessionStats.length})</button>
       <label className="fc-import">
         Run code to share
         <input readOnly value={lastCode} onFocus={event => event.currentTarget.select()} />
         <button type="button" disabled={paused} onClick={() => copyCode(lastCode)}>Copy</button>
       </label>
       {copyFailed && <p role="status">Copying is not available here — select the code above and copy it by hand.</p>}
+    </div>}
+
+    {!status && screen === "stats" && <div className="fc-result fc-stats">
+      <h1>Stats (this session)</h1>
+      {sessionStats.length === 0 ? <p>No runs yet this session.</p> : <>
+        <p className="fc-note">Real numbers from real runs, for balance calibration — not persisted, same as everything else this session.</p>
+        <table>
+          <thead><tr><th>#</th><th>Score</th><th>Height</th><th>Stars</th><th>Ended by</th><th>Time</th></tr></thead>
+          <tbody>
+            {sessionStats.map((stat, index) => <tr key={index}>
+              <td>{sessionStats.length - index}</td><td>{stat.score}</td><td>{stat.heightPoints}</td>
+              <td>{stat.stars}</td><td>{CAUSE_LABEL[stat.cause]}</td><td>{formatClimbTime(stat.ticks)}</td>
+            </tr>)}
+          </tbody>
+        </table>
+        <button type="button" disabled={paused} onClick={copyStats}>Copy as text</button>
+        {statsCopyFailed && <p role="status">Copying is not available here — the table above can still be read directly.</p>}
+      </>}
+      <button type="button" disabled={paused} onClick={() => setScreen("pick")}>Back</button>
     </div>}
 
     {menu === "settings" && <GameMenu title="Settings" onClose={() => setMenu(null)}>
@@ -966,7 +1099,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
       <label><input type="checkbox" checked={powerupsOn} disabled={paused} onChange={event => setPowerupsOn(event.target.checked)} /> Power-ups</label>
       <label><input type="checkbox" checked={raceHudOn} disabled={paused} onChange={event => setRaceHudOn(event.target.checked)} /> Race HUD</label>
       <label><input type="checkbox" checked={fxOn} disabled={paused} onChange={event => setFxOn(event.target.checked)} /> Music &amp; FX</label>
-      <p className="fc-note">Each toggle is snapshotted into the run and its FC6 code, so a replay always matches how it was recorded.</p>
+      <p className="fc-note">Each toggle is snapshotted into the run and its FC7 code, so a replay always matches how it was recorded.</p>
       <button type="button" disabled={paused} onClick={() => setMenu(null)}>Back</button>
     </GameMenu>}
   </section>;

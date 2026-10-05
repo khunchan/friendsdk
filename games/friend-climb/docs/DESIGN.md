@@ -45,7 +45,7 @@ developer, 25% to Rare Friends**.
 **Pool.** `pool = sum(entries) - fee`. The **entire pool is always distributed** — nothing is retained,
 nothing rolls over to the next day.
 
-**Payout, if at least one entrant reaches the summit (`SUMMIT_SCORE`, currently 3500 — lowered from an initial 25000 once bot-skill-tier calibration showed 25000 was roughly 7x past anything the game's own reference player could reach; see games/friend-climb/README.md's "Chase wave calibration"):**
+**Payout, if at least one entrant reaches the summit (`SUMMIT_SCORE`, currently 10000 — a real human run already reached 3261, well past the bot-calibrated 3500 this replaced, so this is a deliberate placeholder with headroom above one known real score, not a settled number; see games/friend-climb/README.md's "Calibrating from real play, not bots"):**
 - **50% of the pool**, split **equally** among every entrant who summited that day (on any of their
   attempts/entries) — reaching the top is itself worth something, regardless of how fast.
 - **50% of the pool**, to the **5 fastest climb times** among everyone who summited, split **40% / 25% / 15%
@@ -92,9 +92,11 @@ this exists yet because nothing here is real yet; Stage 2 should not ship withou
 
 1. Exact minimum-entrant threshold (needs Stage 1 traffic data).
 2. Score-tie handling in the "nobody summited" payout.
-3. Whether `SUMMIT_SCORE` (3500, down from an initial 25000 — see games/friend-climb/README.md's "Chase wave
-   calibration" for the bot-skill-tier data behind that drop) is the right bar once there is real human
-   playtesting data on how long that actually takes at a realistic pace — it is a plain constant in
-   `tower.ts` specifically so this is cheap to revisit. The bot used for calibration is a known floor, not a
-   skilled-human proxy (it has no lookahead), so this number should move up, not down, once real humans play.
+3. Whether `SUMMIT_SCORE` (10000 — a real human run already reached 3261; see games/friend-climb/README.md's
+   "Calibrating from real play, not bots") is the right bar once there is more real human playtesting data on
+   how long that actually takes at a realistic pace — it is a plain constant in `tower.ts` specifically so
+   this is cheap to revisit. The game's own in-session Stats screen (score, height, cause of death, time, per
+   run) exists specifically to collect that data going forward; the bot calibration this replaced is a known
+   floor, not a skilled-human proxy (it has no lookahead), so this number should move with real data, not bot
+   numbers.
 4. Whether re-entries on the same day should have any cap, or stay unlimited as proposed above.

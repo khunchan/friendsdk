@@ -65,21 +65,20 @@ export const CHASE_WAVE_SCORE_STEP = 1000;
 // ~1.5s between the milestone being crossed and the floor actually starting to rise — long enough for the
 // warning banner/sound (index.tsx) to read as a genuine heads-up, not a surprise.
 export const CHASE_WAVE_WARNING_TICKS = 90;
-// Calibrated (see tower.test.mjs's "chase wave calibration" test and the bot-skill table in README.md) against
-// three bot skill tiers over 200 towers each: a weak player should survive the first 1-2 waves, a medium
-// player 3-5, and a strong player should reach the summit only rarely (1-5% of runs).
+// ~6-8s per wave, each later one a little longer, capped so waves never grow unboundedly long.
 export const CHASE_WAVE_BASE_DURATION_TICKS = 420; // ~7s: wave 1's rise-then-retreat length
 export const CHASE_WAVE_DURATION_GROWTH_TICKS = 12; // each later wave runs a little longer
 export const CHASE_WAVE_DURATION_CAP_TICKS = 480; // ~8s hard cap, so waves never grow unboundedly long
-// Measured, not guessed: driving the game's own bot (all three skill tiers, hazards off so the reading is
-// pure climbing rate) through 100 towers each averaged ~119-126 px/s while actually climbing, essentially
-// independent of skill tier (fumbling ends a run rather than slowing it down while it lasts) — see
-// tower.test.mjs's "chase wave calibration" test and README.md's table. Wave 1 rises at a little under that
-// pace (a steadily climbing Friend usually outpaces it), each later wave a little faster, capped comfortably
-// above the measured climb rate so a late wave is eventually a genuine, not just theoretical, threat.
-export const CHASE_WAVE_BASE_SPEED = 100; // px/s wave 1 rises at
-export const CHASE_WAVE_SPEED_GROWTH = 10; // px/s added per later wave
-export const CHASE_WAVE_SPEED_CAP = 170; // px/s hard cap
+// A first pass (100px/s, "a little under" the measured ~119-126px/s climbing rate) made a steadily-climbing
+// player simply outpace the wave for its whole duration — which also means the wave's own floor falls
+// further and further BEHIND the camera's bottom edge the whole time, so it was reported as basically never
+// visible at all, not just rarely dangerous (see README.md's "Chase wave calibration" for the measurement and
+// index.tsx's cameraReference comment for why the math works out that way). Raised well above the measured
+// climbing rate so a wave visibly closes the gap for a steadily-climbing player too, not only a stalled one —
+// the ~6-8s cap (above) is what makes this survivable: the wave only needs to be outlasted, not outrun.
+export const CHASE_WAVE_BASE_SPEED = 180; // px/s wave 1 rises at
+export const CHASE_WAVE_SPEED_GROWTH = 15; // px/s added per later wave
+export const CHASE_WAVE_SPEED_CAP = 260; // px/s hard cap
 
 /** How long wave number `waveIndex` (1 = the first wave, at score CHASE_WAVE_SCORE_STEP) lasts, in ticks,
  * before it recedes back below the ordinary FALL_MARGIN boundary. Pure, so both step() and the renderer
@@ -93,12 +92,15 @@ export function chaseWaveSpeed(waveIndex: number): number {
 }
 
 /** Pure description of the chase wave in effect (if any) right now, for a run whose most recent score
- * milestone (`waveIndex`, 0 if none yet) was crossed at `triggerTick` while at peak height `baseHeight`,
- * evaluated at the given `tick`. `warning` is the ~1.5s heads-up window before the floor moves at all;
- * `active` is the floor-rising window itself; `floor` is -Infinity whenever neither applies (no threat beyond
- * the ordinary FALL_MARGIN boundary), exactly like the old chaseHeight's grace period did. Both step() (for
- * the actual death floor) and index.tsx (for the warning banner/sound, the lava render and music urgency)
- * read this one function, so they can never disagree about when a wave is happening. */
+ * milestone (`waveIndex`, 0 if none yet) was crossed at `triggerTick`, evaluated at the given `tick`.
+ * `baseHeight` is the peak height the floor actually starts rising from — step() keeps this fresh for the
+ * whole warning window (see its own comment), so it reflects the peak right as the floor starts moving, not
+ * wherever it was back when the milestone first fired. `warning` is the ~1.5s heads-up window before the
+ * floor moves at all; `active` is the floor-rising window itself; `floor` is -Infinity whenever neither
+ * applies (no threat beyond the ordinary FALL_MARGIN boundary), exactly like the old chaseHeight's grace
+ * period did. Both step() (for the actual death floor) and index.tsx (for the warning banner/sound, the lava
+ * render and music urgency) read this one function, so they can never disagree about when a wave is
+ * happening. */
 export function chaseWaveFloor(
   waveIndex: number, triggerTick: number, baseHeight: number, tick: number,
 ): Readonly<{ warning: boolean; active: boolean; floor: number }> {
@@ -160,19 +162,17 @@ export const MAGNET_RADIUS = 70; // world-units a star can be auto-collected fro
  * from anything else, so it is trivial to retune once there has been real playtesting to judge how long that
  * actually takes at a realistic pace.
  *
- * Lowered from an initial 25000 (see tower.test.mjs's "chase wave calibration" test and README.md's table):
- * driving the game's own bot — three skill tiers, 200 towers each, with every hazard on (the same rules a
- * live run ships with) — showed the "strong" tier's best run over 200 seeds topping out around score 3500-
- * 4700 (after also fixing MAX_HORIZONTAL_REACH, see its own comment, which had been silently capping real
- * climbs well below that); 25000 was roughly 7x past that, which would have made the summit's "sometimes"
- * closer to "never". 3500 sits right at the "strong" tier's own ~p99, which is deliberate, not a rounding
- * choice: it is high enough that this tier reaches it in only about 1 in 70 runs (1.5% of 200, inside the
- * "1-5%" target) while "weak" and "medium" never do over the same 200 seeds each — but a human player, who
- * (unlike this reflex bot) can actually look ahead and adapt rather than aim at one platform at a time with a
- * fixed per-reaction fumble chance, should clear this bot's ceiling fairly comfortably, which is exactly what
- * keeps "sometimes" from meaning "practically never" once real humans play. Still just a constant, still due
- * for another pass once real human playtesting data exists (see docs/DESIGN.md's open questions). */
-export const SUMMIT_SCORE = 3500;
+ * The bot-skill-tier calibration this was previously set from (3500, see tower.test.mjs's "chase wave
+ * calibration" test and README.md's table) turned out to badly underestimate a real human: the game's own
+ * builder reached 3261 on a live run (score), well past what even the calibration bot's "strong" tier could
+ * reach over 200 towers — direct, concrete proof that the bot is not a stand-in for a skilled human (it has
+ * no lookahead; see botRun's own comment) and that balance has to come from real play, not bot data, from
+ * here on. Raised to 10000 as an explicit placeholder with real headroom above a single real player's current
+ * best, specifically so it does not sit right at the edge of what is already known to be reachable — not a
+ * final answer, just enough room to keep collecting real climb data (see index.tsx's session Stats screen)
+ * before settling on a real number. Still just a constant, still due for another pass (see docs/DESIGN.md's
+ * open questions). */
+export const SUMMIT_SCORE = 10_000;
 
 /** Which of the optional hazards/mechanics below are active for a given run. Purely a matter of which rules
  * were in force — never randomness, never anything that could differ between two replays of the same code —
@@ -212,6 +212,20 @@ export type WindBand = Readonly<{ from: number; to: number; push: number }>;
 export type Tower = Readonly<{ seed: number; platforms: readonly Platform[]; windBands: readonly WindBand[]; drones: readonly Drone[] }>;
 
 const GENERATED_HEIGHT = 50_000; // comfortably above any reachable height in a real run; see tower.test.mjs
+// How far the difficulty ramp (platform width, gap size) stretches before it maxes out. Raised from an
+// implicit 8000 (and switched from a linear ramp to smoothstep below) after a playtest found the narrowing
+// felt like sudden jumps — a real human now routinely climbs well past where the old ramp finished, so
+// cramming the whole difficulty increase into the first 8000 units made that early stretch feel steep, and a
+// plain linear ramp has a visible kink exactly where it hits its cap (the rate of change drops to zero in a
+// single tick, rather than easing out). smoothstep removes that kink at both ends; the longer reach spreads
+// the increase out over more of a real climb.
+const DIFFICULTY_RAMP_HEIGHT = 16_000;
+/** Eases in and out (zero slope at both t=0 and t=1) instead of linear's constant rate the whole way — the
+ * only thing this changes is the shape of the ramp between "easiest" and "hardest", never the endpoints
+ * themselves (difficulty(0) is still exactly 0, difficulty(DIFFICULTY_RAMP_HEIGHT) is still exactly 1). */
+function smoothstep(t: number): number {
+  return t * t * (3 - 2 * t);
+}
 
 /**
  * The whole tower, generated once from a seed. Gaps and sideways drift stay within what one bounce can clear
@@ -225,7 +239,7 @@ export function generateTower(seed: number): Tower {
   const drones: Drone[] = [];
   let height = 0, sinceWind = 0, sinceDrone = 0;
   while (height < GENERATED_HEIGHT) {
-    const difficulty = Math.min(1, height / 8000); // 0 at the base, 1 from height 8000 up
+    const difficulty = smoothstep(Math.min(1, height / DIFFICULTY_RAMP_HEIGHT)); // 0 at the base, eases up to 1
     const width = 70 - 36 * difficulty;
     const gap = 60 + (MAX_BOUNCE_RISE * 0.78 - 60) * difficulty * random();
     height += gap;
@@ -278,7 +292,8 @@ export type RunState = Readonly<{
   // own deterministic time (tick / 60 seconds), never a wall-clock reading.
   summited: boolean;
   // Chase wave bookkeeping: how many score milestones have been crossed so far (0 = no wave yet), the tick
-  // the most recent one was crossed at, and the peak height at that exact moment — chaseWaveFloor's three
+  // the most recent one was crossed at, and the peak height the floor actually starts rising from (kept
+  // fresh through the whole warning window, then frozen — see step()'s own comment) — chaseWaveFloor's three
   // inputs besides the current tick, carried in RunState so a replay reproduces the same wave timing as the
   // original run, not a value recomputed from scratch each frame.
   waveIndex: number; waveTriggerTick: number; waveBaseHeight: number;
@@ -370,6 +385,14 @@ export function step(tower: Tower, state: RunState, dir: Dir, rules: RunRules = 
   if (triggeredWaveIndex > waveIndex) {
     waveIndex = triggeredWaveIndex;
     waveTriggerTick = state.tick + 1;
+    waveBaseHeight = peakHeight;
+  } else if (waveIndex > 0 && state.tick + 1 - waveTriggerTick <= CHASE_WAVE_WARNING_TICKS) {
+    // Keeps the anchor fresh for the whole warning window, not just the instant the milestone was crossed —
+    // a player who keeps climbing through the ~1.5s warning (the normal case) would otherwise have the
+    // floor start rising from however high the peak was back then, already behind the CURRENT peak by
+    // whatever was climbed since. The floor must start exactly FALL_MARGIN below the peak at the moment it
+    // actually begins rising, not wherever the peak happened to be when the milestone first fired, or it
+    // starts the wave already past the camera's bottom edge — invisible from its very first instant.
     waveBaseHeight = peakHeight;
   }
 
@@ -528,11 +551,11 @@ export function botRun(
   return { transitions, result: Object.freeze({ ticks: state.tick, state, score: scoreOf(state) }) };
 }
 
-// --- A short text code for sharing a run: "FC6.<rules digit><seed base36>.<tokens>!<score base36>". ---
+// --- A short text code for sharing a run: "FC7.<rules digit><seed base36>.<tokens>!<score base36>". ---
 // Each token is "<ticks since the previous change, base36><L|N|R>". Direction letters are uppercase and base36
 // digits are lowercase, so a single regex splits tokens unambiguously without a separator between them.
 //
-// The version number has moved five times now, each time because the same seed and transitions started
+// The version number has moved six times now, each time because the same seed and transitions started
 // replaying to a different score than before: FC1 -> FC2 fixed a star paying out on every repeat bounce
 // instead of once; FC2 -> FC3 added springs and the star combo bonus; FC3 -> FC4 added the chase, drones and
 // power-ups (and introduced RunRules, see its own comment, as a new thing a code has to carry); FC4 -> FC5
@@ -540,14 +563,13 @@ export function botRun(
 // (a tuning fix to tower generation itself, which shifts the seeded random() sequence for everything
 // generated after a tower's first drone, same as FC2 -> FC3 silently reshaping towers when spring/power-up
 // fields were added); FC5 -> FC6 replaced the always-on, ever-accelerating chase with short score-triggered
-// waves (chaseWaveFloor) — a playtest showed the old chase killed a weak player on the very first encounter
-// and never let up, which this directly fixes, calibrated against three bot skill tiers rather than tuned by
-// eye — and, bundled into the same bump since both were found via that same calibration: lowered
-// SUMMIT_SCORE from 25000 (see its own comment), and fixed generateTower's sideways-drift bound
-// (MAX_HORIZONTAL_REACH, see its own comment), which had been overestimating true reach by ~3.9x and could
-// occasionally place a jump no player, however skilled, could actually clear — found via a calibration bot
-// that kept failing one specific, reproducible jump even at zero fumble. All five old prefixes are refused by
-// name instead of silently replaying to a number that no longer matches what the code claims.
+// waves (chaseWaveFloor), lowered SUMMIT_SCORE from 25000 and fixed generateTower's sideways-drift bound
+// (MAX_HORIZONTAL_REACH, see its own comment); FC6 -> FC7 fixed the wave anchor so it starts exactly at the
+// camera's bottom edge instead of already behind it (see step()'s own comment), raised the wave speed well
+// above typical climbing pace so it is actually visible closing the gap, raised SUMMIT_SCORE again (a real
+// human run beat the FC6 value — see its own comment) and switched the difficulty ramp from linear to
+// smoothstep over a longer reach (DIFFICULTY_RAMP_HEIGHT, see its own comment). All six old prefixes are
+// refused by name instead of silently replaying to a number that no longer matches what the code claims.
 const TOKEN = /([0-9a-z]+)([LNR])/g;
 const LETTER: Record<Dir, "L" | "N" | "R"> = { [-1]: "L", 0: "N", 1: "R" };
 const DIR_OF: Record<string, Dir> = { L: -1, N: 0, R: 1 };
@@ -566,7 +588,7 @@ export function encodeRun(seed: number, transitions: readonly Transition[], scor
     previous = tick;
     return token;
   });
-  return `FC6.${rulesToFlags(rules)}${seed.toString(36)}.${tokens.join("")}!${score.toString(36)}`;
+  return `FC7.${rulesToFlags(rules)}${seed.toString(36)}.${tokens.join("")}!${score.toString(36)}`;
 }
 
 export type DecodedRun = Readonly<{ seed: number; transitions: readonly Transition[]; claimedScore: number; rules: RunRules }>;
@@ -588,7 +610,10 @@ export function decodeRun(code: string): DecodedRun {
   if (/^FC5\./.test(trimmed)) {
     throw new Error("That run code is from an older version of Friend Climb (the chase worked differently then — a constant chase, not short waves) and can no longer be replayed.");
   }
-  const match = /^FC6\.([0-7])([0-9a-z]+)\.([0-9a-zLNR]*)!([0-9a-z]+)$/.exec(trimmed);
+  if (/^FC6\./.test(trimmed)) {
+    throw new Error("That run code is from an older version of Friend Climb (the chase waves and difficulty ramp worked differently then) and can no longer be replayed.");
+  }
+  const match = /^FC7\.([0-7])([0-9a-z]+)\.([0-9a-zLNR]*)!([0-9a-z]+)$/.exec(trimmed);
   if (!match) throw new Error("That run code does not look like a Friend Climb code.");
   const [, flagsPart, seedPart, tokenPart, scorePart] = match;
   const transitions: Transition[] = [];

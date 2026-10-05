@@ -60,17 +60,18 @@ test("a run code carries which optional mechanics were active, round-tripping ex
 
 test("decoding rejects text that is not a Friend Climb code", () => {
   assert.throws(() => tower.decodeRun("not a code"), /does not look like/);
-  assert.throws(() => tower.decodeRun("FC6.75.3L!x!y"), /does not look like/);
+  assert.throws(() => tower.decodeRun("FC7.75.3L!x!y"), /does not look like/);
   // "LL" is inside the loose outer shape (only 0-9, a-z, L, N, R are allowed) but has no digits before
   // either letter, so the token scanner can match neither — exercises the leftover-character check.
-  assert.throws(() => tower.decodeRun("FC6.75.LL!a"), /unreadable characters/);
+  assert.throws(() => tower.decodeRun("FC7.75.LL!a"), /unreadable characters/);
 });
 
 test("decoding rejects an old code by name instead of silently replaying it to a different score", () => {
   // v1 (FC1) paid out a star on every bounce off a star platform, not once; v2 (FC2) had no springs or combo
   // bonus; v3 (FC3) had no chase, drones or power-ups; v4 (FC4) had no summit and a different drone layout;
-  // v5 (FC5) had an always-on, ever-accelerating chase instead of short score-triggered waves. None of their
-  // claimed scores are reproducible under the current logic, so all five must be refused with their own
+  // v5 (FC5) had an always-on, ever-accelerating chase instead of short score-triggered waves; v6 (FC6) had a
+  // differently-anchored, slower chase wave and a linear (not smoothstep) difficulty ramp. None of their
+  // claimed scores are reproducible under the current logic, so all six must be refused with their own
   // specific message, not treated as generic garbage or replayed to a wrong number.
   assert.throws(() => tower.decodeRun("FC1.5.3L!a"), /older version/);
   assert.throws(() => tower.decodeRun("FC1.5.3L!a"), error => !/does not look like/.test(error.message));
@@ -82,6 +83,8 @@ test("decoding rejects an old code by name instead of silently replaying it to a
   assert.throws(() => tower.decodeRun("FC4.5.3L!a"), error => !/does not look like/.test(error.message));
   assert.throws(() => tower.decodeRun("FC5.5.3L!a"), /older version/);
   assert.throws(() => tower.decodeRun("FC5.5.3L!a"), error => !/does not look like/.test(error.message));
+  assert.throws(() => tower.decodeRun("FC6.5.3L!a"), /older version/);
+  assert.throws(() => tower.decodeRun("FC6.5.3L!a"), error => !/does not look like/.test(error.message));
 });
 
 test("a star only pays out once, even when the same platform is bounced on many times", () => {

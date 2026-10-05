@@ -121,8 +121,9 @@ try {
     // Race a friend's code: a mismatched-tower code shows a clear warning, garbage shows a decode error, and
     // codes from any pre-fix version (FC1's star-scoring bug, FC2's missing springs/combo bonus, FC3's
     // missing chase/drones/power-ups, FC4's missing summit and different drone layout, FC5's constant chase
-    // instead of waves) are refused by name instead of being replayed to a wrong score.
-    await child.getByLabel("Race a friend's code").fill('FC6.79999.3R!a');
+    // instead of waves, FC6's differently-anchored wave and linear difficulty ramp) are refused by name
+    // instead of being replayed to a wrong score.
+    await child.getByLabel("Race a friend's code").fill('FC7.79999.3R!a');
     await child.getByRole('button', { name: 'Load' }).click();
     await child.getByText('different tower', { exact: false }).waitFor();
     await child.getByLabel("Race a friend's code").fill('not a real code');
@@ -141,6 +142,9 @@ try {
     await child.getByRole('button', { name: 'Load' }).click();
     await child.getByText('older version', { exact: false }).waitFor();
     await child.getByLabel("Race a friend's code").fill('FC5.5.3R!a');
+    await child.getByRole('button', { name: 'Load' }).click();
+    await child.getByText('older version', { exact: false }).waitFor();
+    await child.getByLabel("Race a friend's code").fill('FC6.5.3R!a');
     await child.getByRole('button', { name: 'Load' }).click();
     await child.getByText('older version', { exact: false }).waitFor();
     await child.getByLabel("Race a friend's code").fill('');
@@ -222,7 +226,7 @@ try {
     assert.equal(total, heightPoints + starPoints, 'the breakdown must add up to the total');
     assert.equal(total, score, 'the breakdown total must match the score heading');
     const code = await child.getByLabel('Run code to share').inputValue();
-    assert.match(code, /^FC6\.[0-7][0-9a-z]+\.[0-9a-zLNR]*![0-9a-z]+$/, 'The shared run code has the expected shape');
+    assert.match(code, /^FC7\.[0-7][0-9a-z]+\.[0-9a-zLNR]*![0-9a-z]+$/, 'The shared run code has the expected shape');
     await assertBounds(page); await gameBounds(child);
 
     // Clipboard access may or may not be granted inside the sandboxed frame; either outcome must be handled.
