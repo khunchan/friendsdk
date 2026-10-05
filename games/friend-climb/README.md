@@ -50,16 +50,20 @@ Jumping with nothing else going on got repetitive once a run passed a few hundre
 and no sense of competing with anyone in the moment. Five mechanics address that, each with its own Settings
 toggle (default on) so you can compare what each one actually adds:
 
-- **Chase.** A rising, accelerating "lava" floor, completely independent of how high you have personally
-  climbed — unlike `FALL_MARGIN` (which only ever follows your own peak), this punishes stalling at a
-  perfectly safe height, not just falling. It starts with 8 seconds of total safety (`CHASE_GRACE_TICKS`),
-  then rises and keeps accelerating, so standing still is never a long-term option. Drawn as a filled,
-  wavy-edged band in the same black/green/white palette as everything else — never a traditional orange/red
-  lava — and it IS the death boundary whenever it is ahead of `FALL_MARGIN`: the camera's reference height
-  becomes `max(peakHeight, chaseHeight(tick) + FALL_MARGIN)`, the same "screen's bottom edge is exactly the
-  death line" guarantee from the camera section below, generalized to whichever threshold is currently
-  stricter. `tower.test.mjs` proves both that it eventually catches a Friend who stops moving and that it
-  never fires at all while disabled.
+- **Chase.** Short, recurring "lava" waves, not a permanent rising floor — a playtest of the original
+  always-on, ever-accelerating chase (FC5 and before) showed it killing a weak player on the very first
+  encounter and never letting up, which is the opposite of what a time-pressure mechanic should feel like.
+  Outside a wave, the only death boundary is the ordinary `FALL_MARGIN` one below; a wave triggers every
+  `CHASE_WAVE_SCORE_STEP` score points (1000 — the exact same milestone the on-screen banner announces, by
+  construction, not by coincidentally-matching tuning), with a ~1.5s "LAVA SURGE!" warning before the floor
+  actually starts rising, then a ~7-8s rise-and-recede window (`chaseWaveFloor`, `chaseWaveDuration`,
+  `chaseWaveSpeed`). Each later wave rises a little faster and lasts a little longer, both capped. Drawn as a
+  filled, wavy-edged band in the same black/green/white palette as everything else — never a traditional
+  orange/red lava — and it IS the death boundary whenever an active wave is ahead of `FALL_MARGIN`: the
+  camera's reference height becomes `max(peakHeight, chaseFloor + FALL_MARGIN)`, the same "screen's bottom
+  edge is exactly the death line" guarantee from the camera section below, generalized to whichever threshold
+  is currently stricter. `tower.test.mjs` proves the wave's own timing (absent, warning, active, receded) and
+  that stalling between waves is never punished — only an active wave is a threat, never a permanent one.
 - **Drones.** Small hazards that patrol a short horizontal stretch at specific heights (never before
   `DRONE_START_HEIGHT`); crossing through one knocks you down hard and starts a brief invulnerability window,
   so one overlap is one hit, not one hit per tick. A drone's own width is kept well under the lane's full
@@ -105,22 +109,75 @@ separate problems, both now fixed:
    an actual run, independent of player skill. Lowered to 220 (and `DRONE_SPACING` 420→300) — a data-driven
    balance fix grounded in the bot's own measured death heights, not a per-player difficulty slider.
 2. **Neither mechanic announced itself.** A player dying to the chase or a drone had no way to tell that was
-   what happened, as opposed to an ordinary missed platform. Now: the instant the chase's grace period ends,
-   a "LAVA RISING!" banner and a rising rumble tone fire once per run; the first time any drone is actually
-   visible on screen (not merely generated into the tower), a short two-note alert sting fires once per run.
-   Neither is gated by `raceHudOn`/`fxOn` for the lava case (it is drawn as a plain banner, not an "FX") —
-   both sounds specifically respect the Music & FX toggle and the Sound button, same as the rest of the audio.
+   what happened, as opposed to an ordinary missed platform. Now: each wave's ~1.5s warning window fires a
+   "LAVA SURGE!" banner and a rising rumble tone exactly once per wave (not once per run, since waves recur);
+   the first time any drone is actually visible on screen (not merely generated into the tower), a short
+   two-note alert sting fires once per run. Neither is gated by `raceHudOn`/`fxOn` for the lava case (it is
+   drawn as a plain banner, not an "FX") — both sounds specifically respect the Music & FX toggle and the
+   Sound button, same as the rest of the audio.
+
+A second playtest round liked the mechanics but reported never actually seeing a chase or a drone across a
+normal run. The chase's own redesign above (short warned waves instead of a permanent always-on threat) is
+the direct fix for that half of the report; see "Chase wave calibration" below for the data behind it.
 
 ### The summit
 
-Reaching **`SUMMIT_SCORE`** (currently 25000, a plain constant in `tower.ts` chosen to be easy to retune once
-there is real playtesting data on how long that actually takes) ends the run as a **win**, not a fall — a
+Reaching **`SUMMIT_SCORE`** (currently 3500, a plain constant in `tower.ts` chosen to be easy to retune once
+there is real playtesting data on how long that actually takes — see "Chase wave calibration" for how 3500
+was picked, down from an initial, wildly-unreachable 25000) ends the run as a **win**, not a fall — a
 "SUMMIT!" banner on the result screen, a reward sound instead of the usual impact, and the run's own
 deterministic climb time (`tick / 60` seconds, exactly reproducible from the run code, never a wall-clock
 reading) recorded alongside the score. A summited `RunState` freezes exactly like a fallen one does (`alive`
 is `false` either way); `state.summited` is what tells the two apart. This is also why the run code moved to
-`FC5` (see Known limits) — reaching the summit is a second, new way a run can end, something older code
+`FC6` (see Known limits) — reaching the summit is a second, new way a run can end, something older code
 formats never had to represent at all.
+
+### Chase wave calibration
+
+The original goal for the chase waves was a clean difficulty curve: a weak player survives the first 1-2
+waves, a medium player 3-5, and a strong player only "sometimes" (1-5% of runs) reaches the summit. To
+calibrate against that without guessing, three fixed bot skill tiers (`BotSkill`: `"weak" | "medium" |
+"strong"`, see `botRun`'s own comment) were run over 200 towers each, under the exact rules a live run ships
+with (`DEFAULT_RULES` — chase, drones and power-ups all on).
+
+The headline finding wasn't about the chase at all: this reflex bot's own climbing ceiling (aim at one
+platform at a time, a fixed per-reaction fumble chance, no lookahead) turned out to be the real bottleneck —
+and chasing that down surfaced two real, pre-existing bugs, not just a tuning gap:
+
+1. **`botRun` was mistracking which platform it had actually landed on**, by a height tolerance far too
+   tight for normal tick-quantization (physics resolves once per 1/60s, so a landing is caught a few pixels
+   into the platform, never exactly at its surface) — it would get stuck believing it had never reached a
+   platform it was already bouncing on every cycle, and so never attempt the next jump. Fixed (see
+   `botRun`'s own comment); roughly tripled typical scores on its own.
+2. **Tower generation's own sideways-drift bound was wrong, independent of the bot or the chase.** Found via
+   this same bot failing one specific, reproducible jump at the test fixture's pinned seed (1500) even with
+   zero fumble and reacting every tick — not a skill issue, a jump nobody could clear. Generation's `reach`
+   formula (`HORIZONTAL_ACCEL * halfAirTime**2 + MAX_HORIZONTAL_SPEED * halfAirTime`) assumed full
+   acceleration *and* the full speed cap both applied for the entire half-flight at once, which double-counts
+   distance and is physically impossible once the speed cap is actually hit — about 3.9x too generous as a
+   result. Fixed with the correct two-phase kinematics (`MAX_HORIZONTAL_REACH`, see its own comment) — this is
+   a fairness bug, not a balance one: it could occasionally place a jump no player, however skilled, could
+   actually clear, in any tower, independent of hazards.
+
+With both fixed, the "strong" tier's best run over 200 towers reaches score ~3500-4700 — real thousands, if
+still short of the *tens* of thousands the original band assumed. A human player, who can look ahead and
+adapt rather than aim at a single next platform, is expected to climb meaningfully further than this bot
+does — so `SUMMIT_SCORE` and the wave speed/duration constants are calibrated against what this bot
+*actually* achieves (a real, reproducible floor), not the original band, which still needs real human
+playtesting data to validate (see `docs/DESIGN.md`'s open questions).
+
+| tier | median score | median seconds survived | median waves survived | strong-tier summit rate |
+| --- | --- | --- | --- | --- |
+| weak | 314 | 11.2s | 0 | 0% (never, over 200 towers) |
+| medium | 643 | 22.5s | 0 | 0% (never, over 200 towers) |
+| strong | 1023 | 37.4s | 0 (max 3) | 1.5% (3/200 towers) |
+
+`CHASE_WAVE_BASE_SPEED` (100px/s) is grounded in a separate, cleaner measurement: all three tiers, hazards
+off, climb at essentially the same ~119-126px/s while actually progressing (fumbling ends a run rather than
+slowing it down) — wave 1 rises a little under that pace, each later wave a little faster, capped well above
+it so a late wave is eventually a genuine threat even to a player who never stops climbing.
+`tower.test.mjs`'s "chase wave calibration" test locks in the table above (with tolerance, not exact pinned
+numbers) as a regression check, not as a claim that this is the final, human-validated balance.
 
 ## The camera and the death boundary
 
@@ -185,13 +242,13 @@ The physics run on a **fixed 1/60s step**, decoupled from the browser's actual f
 the same recorded left/right presses always replay to the exact same score, on any machine, at any frame
 rate — `tower.test.mjs` checks this too. That determinism is also what makes two things possible:
 
-- **A run code to share.** After a run, a short text code (`FC4.<rules digit><seed>.<moves>!<score>`) encodes
+- **A run code to share.** After a run, a short text code (`FC6.<rules digit><seed>.<moves>!<score>`) encodes
   the seed, which optional rules (chase/drones/power-ups) were active, and every direction change — not every
   frame, so it stays short for a realistic run. A friend pastes it in and races a ghost of that exact run,
   under its own recorded rules, on the same tower. There is no server: the code is the whole message. The
-  version number has moved three times now (v1 → v2 → v3 → v4, see Known limits), each time because a change
-  to scoring or survival meant old codes could no longer be replayed to the score they claimed; `decodeRun`
-  refuses a v1, v2 or v3 code by name instead of guessing.
+  version number has moved five times now (v1 → v2 → v3 → v4 → v5 → v6, see Known limits), each time because a
+  change to scoring or survival meant old codes could no longer be replayed to the score they claimed;
+  `decodeRun` refuses a v1-v5 code by name instead of guessing.
 - **A bot ghost from your first attempt.** A simple scripted "bot" (always labeled "bot", never shown as a
   Friend) aims at the next platform with a human-scale reaction delay and an increasing chance to fumble as
   the tower gets harder, so it is an opponent, not an aimbot — `tower.test.mjs` checks that it is reproducible
@@ -226,16 +283,30 @@ rate — `tower.test.mjs` checks this too. That determinism is also what makes t
   (which of those three were active) as a new thing a code has to carry. v4 had no summit, and a different
   `DRONE_START_HEIGHT`/`DRONE_SPACING` (which shifts the seeded random() sequence for everything generated
   after a tower's first drone, same as v2→v3 silently reshaping towers when spring/power-up fields were
-  added) — bumped to `FC5`. All four older prefixes are now refused with their own clear message rather than
-  replayed to a different score.
+  added) — bumped to `FC5`. v5's chase was an always-on, ever-accelerating floor instead of short waves, and
+  had a much higher `SUMMIT_SCORE` (25000, essentially unreachable per the calibration data above) — bumped
+  to `FC6`. All five older prefixes are now refused with their own clear message rather than replayed to a
+  different score.
 - **Moving platforms were considered for the "jumping feels empty" pass and not built.** They would need
   their own reachability proof added to `tower.test.mjs` — a moving platform's catchable window changes the
   gap math everywhere a static platform's doesn't — more scope than the five mechanics built this round. A
   good candidate for a follow-up once those have been played with for a while.
 - **Chase/drone/power-up tuning is a first pass**, same disclaimer as the bot's fumble rate above — the exact
-  numbers (`CHASE_BASE_SPEED`, `CHASE_ACCEL`, `DRONE_SPACING`, power-up pickup odds, `SUMMIT_SCORE`) are
-  reasoned-about starting points, not balanced against real play yet. `DRONE_START_HEIGHT` specifically was
-  already revised once, from measured bot death heights (see "Making the chase and drones noticeable" above).
+  numbers (`CHASE_WAVE_BASE_SPEED`, `DRONE_SPACING`, power-up pickup odds, `SUMMIT_SCORE`) are reasoned-about
+  starting points grounded in bot data (see "Chase wave calibration" above), not balanced against real human
+  play yet. `DRONE_START_HEIGHT` and the chase's own shape (waves vs. a permanent floor) have each already
+  been revised once from measured bot data.
+- **The calibration bot is not a stand-in for a skilled human.** Its "strong" tier still only reaches score
+  ~3500-4700 in its best runs over 200 towers — a human who can look ahead and plan, rather than aim at one
+  platform at a time with a fixed per-reaction fumble chance, is expected to climb meaningfully further. This
+  is exactly why `SUMMIT_SCORE` is flagged as needing real playtesting data, not treated as settled by the bot
+  numbers alone.
+- **`MAX_HORIZONTAL_REACH` was a real, pre-existing fairness bug, fixed this round (see "Chase wave
+  calibration" above).** Generation's old sideways-drift bound overestimated true reach by ~3.9x, so some
+  towers (any seed, not just ones with hazards) could already contain a jump no player could actually clear.
+  Every tower generated before this fix (any run code sharing an old seed-to-layout mapping) laid out
+  differently; bundled into the same `FC6` bump as the chase rework, since both changed what a given seed
+  replays to.
 
 ## Checks
 
@@ -243,7 +314,7 @@ Run on 2026-10-05 with SDK v0.1.4 and Node.js 22, from the SDK root:
 
 | Command | Result |
 | --- | --- |
-| `node --test games/friend-climb/tower.test.mjs` | 26 tests: replay, encode/decode (incl. RunRules), run-code version rejection, reachability (platforms and drones), tower safety, camera/death-boundary alignment, springs, combo, chase, drones, rocket, shield, magnet, summit, the bot, scoring |
+| `node --test games/friend-climb/tower.test.mjs` | 30 tests: replay, encode/decode (incl. RunRules), run-code version rejection, reachability (platforms and drones), tower safety, camera/death-boundary alignment, springs, combo, chase waves, drones, rocket, shield, magnet, summit, the 200-tower bot skill-tier calibration, the bot, scoring |
 | `node scripts/dev-game.mjs check games/friend-climb` (`friendsdk check`) | game definition and build |
 | `node scripts/dev-game.mjs test games/friend-climb` (`friendsdk test`) | the SDK's automated browser check with its mock wallet |
 | `node games/friend-climb/check-browser.mjs` | this game's own browser check at 1100 px and 360 px |

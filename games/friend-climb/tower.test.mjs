@@ -60,17 +60,18 @@ test("a run code carries which optional mechanics were active, round-tripping ex
 
 test("decoding rejects text that is not a Friend Climb code", () => {
   assert.throws(() => tower.decodeRun("not a code"), /does not look like/);
-  assert.throws(() => tower.decodeRun("FC5.75.3L!x!y"), /does not look like/);
+  assert.throws(() => tower.decodeRun("FC6.75.3L!x!y"), /does not look like/);
   // "LL" is inside the loose outer shape (only 0-9, a-z, L, N, R are allowed) but has no digits before
   // either letter, so the token scanner can match neither — exercises the leftover-character check.
-  assert.throws(() => tower.decodeRun("FC5.75.LL!a"), /unreadable characters/);
+  assert.throws(() => tower.decodeRun("FC6.75.LL!a"), /unreadable characters/);
 });
 
 test("decoding rejects an old code by name instead of silently replaying it to a different score", () => {
   // v1 (FC1) paid out a star on every bounce off a star platform, not once; v2 (FC2) had no springs or combo
-  // bonus; v3 (FC3) had no chase, drones or power-ups; v4 (FC4) had no summit and a different drone layout.
-  // None of their claimed scores are reproducible under the current logic, so all four must be refused with
-  // their own specific message, not treated as generic garbage or replayed to a wrong number.
+  // bonus; v3 (FC3) had no chase, drones or power-ups; v4 (FC4) had no summit and a different drone layout;
+  // v5 (FC5) had an always-on, ever-accelerating chase instead of short score-triggered waves. None of their
+  // claimed scores are reproducible under the current logic, so all five must be refused with their own
+  // specific message, not treated as generic garbage or replayed to a wrong number.
   assert.throws(() => tower.decodeRun("FC1.5.3L!a"), /older version/);
   assert.throws(() => tower.decodeRun("FC1.5.3L!a"), error => !/does not look like/.test(error.message));
   assert.throws(() => tower.decodeRun("FC2.5.3L!a"), /older version/);
@@ -79,6 +80,8 @@ test("decoding rejects an old code by name instead of silently replaying it to a
   assert.throws(() => tower.decodeRun("FC3.5.3L!a"), error => !/does not look like/.test(error.message));
   assert.throws(() => tower.decodeRun("FC4.5.3L!a"), /older version/);
   assert.throws(() => tower.decodeRun("FC4.5.3L!a"), error => !/does not look like/.test(error.message));
+  assert.throws(() => tower.decodeRun("FC5.5.3L!a"), /older version/);
+  assert.throws(() => tower.decodeRun("FC5.5.3L!a"), error => !/does not look like/.test(error.message));
 });
 
 test("a star only pays out once, even when the same platform is bounced on many times", () => {
@@ -101,14 +104,19 @@ test("a star only pays out once, even when the same platform is bounced on many 
 });
 
 test("every platform gap and sideways drift stays within what one bounce can clear", () => {
+  // MAX_HORIZONTAL_REACH is the true physics bound (accelerate until MAX_HORIZONTAL_SPEED caps it, then
+  // travel at that capped speed) — checking against it directly, rather than re-deriving a separate formula
+  // here, is what would have caught generation's previous reach formula overestimating true reach by ~3.9x
+  // (it assumed full acceleration AND the full capped speed applied for the entire half-flight at once,
+  // which double-counts the accelerating phase's own distance) — found via a bot that kept failing one
+  // specific, reproducible jump at seed 1500 even with zero fumble (see check-browser.mjs).
   for (const seed of [1, 2, 3, 2026]) {
     const { platforms } = tower.generateTower(seed);
     for (let index = 1; index < platforms.length; index++) {
       const gap = platforms[index].height - platforms[index - 1].height;
       assert(gap > 0 && gap < tower.MAX_BOUNCE_RISE, `seed ${seed}, platform ${index}: gap ${gap} exceeds what a bounce can clear`);
       const drift = Math.abs(platforms[index].x - platforms[index - 1].x);
-      const reach = tower.HORIZONTAL_ACCEL * (tower.BOUNCE_AIR_TIME / 2) ** 2 + tower.MAX_HORIZONTAL_SPEED * (tower.BOUNCE_AIR_TIME / 2);
-      assert(drift <= reach + 1, `seed ${seed}, platform ${index}: sideways drift ${drift} is further than one bounce can carry`);
+      assert(drift <= tower.MAX_HORIZONTAL_REACH + 1, `seed ${seed}, platform ${index}: sideways drift ${drift} is further than one bounce can carry`);
     }
   }
 });
@@ -186,12 +194,11 @@ test("a run never collects more stars than exist among the platforms it actually
 });
 
 test("the ghost bot is deterministic and does not meet the exact same fate on every seed", () => {
-  // With the chase on (the default rules), surviving all the way to the tick cap is no longer a meaningful
-  // "win" to check for — the chase is specifically designed so nobody can stall indefinitely, bot included,
-  // so it is expected to eventually fall on essentially every seed now. What still matters, and is still
-  // worth proving, is that the bot is not a scripted, identical failure every time: some seeds genuinely give
-  // it a much harder or easier time than others, which is what makes it a credible opponent rather than a
-  // fixed timer dressed up as one.
+  // What matters here, and is worth proving regardless of how the chase itself works, is that the bot is not
+  // a scripted, identical failure every time: some seeds genuinely give it a much harder or easier time than
+  // others (mostly from ordinary platforming and drones, at this bot's own skill level — see the "chase wave
+  // calibration" test for how rarely this bot's climbing even reaches the chase's first wave), which is what
+  // makes it a credible opponent rather than a fixed timer dressed up as one.
   const ticksSurvived = [];
   for (let seed = 1; seed <= 100; seed++) {
     const a = tower.botRun(seed), b = tower.botRun(seed);
@@ -255,30 +262,84 @@ test("consecutive star landings earn a growing combo bonus, which a plain landin
   assert.equal(state.starPoints, expectedStarPoints, "total star points must match the combo bonus formula applied at each landing");
 });
 
-test("the chase eventually kills a Friend who stays at a safe, unmoving height, when enabled", () => {
+test("a chase wave is absent before it is triggered, present only during its warning+active window, and gone again after", () => {
+  const trigger = 1000, base = 5000;
+  // Before the milestone that would trigger it, waveIndex is 0 — no threat at any tick, past or future.
+  assert.equal(tower.chaseWaveFloor(0, trigger, base, trigger + 50).floor, -Infinity);
+  // The ~1.5s warning window poses no threat yet, only the (purely presentational) warning flag.
+  const justTriggered = tower.chaseWaveFloor(1, trigger, base, trigger);
+  assert.equal(justTriggered.warning, true);
+  assert.equal(justTriggered.active, false);
+  assert.equal(justTriggered.floor, -Infinity);
+  const stillWarning = tower.chaseWaveFloor(1, trigger, base, trigger + tower.CHASE_WAVE_WARNING_TICKS - 1);
+  assert.equal(stillWarning.warning, true);
+  assert.equal(stillWarning.floor, -Infinity);
+  // Once the warning window elapses, the floor starts rising from exactly base - FALL_MARGIN.
+  const justActive = tower.chaseWaveFloor(1, trigger, base, trigger + tower.CHASE_WAVE_WARNING_TICKS);
+  assert.equal(justActive.active, true);
+  assert.equal(justActive.floor, base - tower.FALL_MARGIN);
+  const midActive = tower.chaseWaveFloor(1, trigger, base, trigger + tower.CHASE_WAVE_WARNING_TICKS + 60);
+  const expectedRise = tower.chaseWaveSpeed(1) * (60 * tower.DT);
+  assert.ok(Math.abs(midActive.floor - (base - tower.FALL_MARGIN + expectedRise)) < 1e-6, "the floor must rise linearly at exactly chaseWaveSpeed(1)");
+  // After its duration elapses, the wave has fully receded — same as if it had never fired, not a floor
+  // frozen at wherever it last reached.
+  const afterDuration = tower.chaseWaveFloor(1, trigger, base, trigger + tower.CHASE_WAVE_WARNING_TICKS + tower.chaseWaveDuration(1) + 1);
+  assert.equal(afterDuration.active, false);
+  assert.equal(afterDuration.floor, -Infinity);
+});
+
+test("later waves rise faster and last longer than the first, both capped so they never grow unboundedly", () => {
+  assert.ok(tower.chaseWaveSpeed(5) > tower.chaseWaveSpeed(1), "a later wave must rise faster than the first");
+  assert.ok(tower.chaseWaveDuration(5) > tower.chaseWaveDuration(1), "a later wave must last longer than the first");
+  assert.equal(tower.chaseWaveSpeed(1000), tower.CHASE_WAVE_SPEED_CAP, "speed must stay capped no matter how many waves have fired");
+  assert.equal(tower.chaseWaveDuration(1000), tower.CHASE_WAVE_DURATION_CAP_TICKS, "duration must stay capped no matter how many waves have fired");
+});
+
+test("between waves, a Friend who stays at a safe, unmoving height is never caught — only an active wave is a threat, never a permanent one", () => {
   const oneTower = Object.freeze({
     seed: 0, windBands: Object.freeze([]), drones: Object.freeze([]),
     platforms: Object.freeze([{ x: 150, height: 0, width: 90, breaking: false, star: false, spring: false, powerup: null }]),
   });
   const rules = { chase: true, drones: false, powerups: false };
   let state = tower.startRun();
-  // Comfortably inside the grace period, chaseHeight is still exactly 0, so ordinary safe bouncing on the
-  // same platform forever (which revisits height 0 on every landing) must not be touched by it at all yet.
-  for (let tick = 0; tick < tower.CHASE_GRACE_TICKS - 60 && state.alive; tick++) state = tower.step(oneTower, state, 0, rules);
-  assert(state.alive, "the chase must not have caught up at all yet, comfortably inside its own grace period");
-  for (let tick = 0; tick < 60 * 90 && state.alive; tick++) state = tower.step(oneTower, state, 0, rules);
-  assert.equal(state.alive, false, "a Friend bouncing on the exact same platform forever must eventually be caught by the rising chase");
+  // Bouncing forever on the one platform at height 0 settles into a fixed-point oscillation (the same apex
+  // every bounce) with a score far under the first milestone — unlike the old always-on chase (FC5 and
+  // before), which eventually caught this exact Friend regardless, a wave-based chase that never triggers
+  // must never threaten it at all, no matter how long the run goes on.
+  for (let tick = 0; tick < 60 * 90; tick++) state = tower.step(oneTower, state, 0, rules);
+  assert.equal(state.alive, true, "a score that never reaches the first milestone must never trigger a wave");
+  assert.equal(state.waveIndex, 0);
 });
 
-test("the chase never fires at all when disabled, even far past when it would otherwise have caught up", () => {
+test("a chase wave actually fires in step() once score crosses a milestone, and catches a Friend who then stalls through it", () => {
+  const platformHeight = 9995; // one bounce from here crosses score 1000 (height 10000) right at its apex
   const oneTower = Object.freeze({
     seed: 0, windBands: Object.freeze([]), drones: Object.freeze([]),
-    platforms: Object.freeze([{ x: 150, height: 0, width: 90, breaking: false, star: false, spring: false, powerup: null }]),
+    platforms: Object.freeze([{ x: 150, height: platformHeight, width: 90, breaking: false, star: false, spring: false, powerup: null }]),
+  });
+  const rules = { chase: true, drones: false, powerups: false };
+  let state = { ...tower.startRun(), height: platformHeight, peakHeight: platformHeight, vy: -10, x: 150 };
+  for (let i = 0; i < 5 && state.waveIndex === 0; i++) state = tower.step(oneTower, state, 0, rules);
+  assert.equal(state.waveIndex, 1, "crossing above height 10000 with no star points must trigger the first wave (score 1000)");
+  const triggerTick = state.waveTriggerTick;
+  // Stall on the same platform (no further climbing) through the warning window and well into the active
+  // one — the same single-platform bounce this Friend was already doing before the wave fired.
+  for (let tick = state.tick; tick < triggerTick + tower.CHASE_WAVE_WARNING_TICKS + tower.chaseWaveDuration(1) && state.alive; tick++) {
+    state = tower.step(oneTower, state, 0, rules);
+  }
+  assert.equal(state.alive, false, "stalling at the same height all the way through an active wave must eventually be caught by it");
+});
+
+test("the same stalling pattern that an active wave catches survives indefinitely with the chase disabled", () => {
+  const platformHeight = 9995;
+  const oneTower = Object.freeze({
+    seed: 0, windBands: Object.freeze([]), drones: Object.freeze([]),
+    platforms: Object.freeze([{ x: 150, height: platformHeight, width: 90, breaking: false, star: false, spring: false, powerup: null }]),
   });
   const rules = { chase: false, drones: false, powerups: false };
-  let state = tower.startRun();
-  for (let tick = 0; tick < 60 * 90; tick++) state = tower.step(oneTower, state, 0, rules);
-  assert.equal(state.alive, true, "with the chase off, bouncing in place forever must stay exactly as safe as it always was");
+  let state = { ...tower.startRun(), height: platformHeight, peakHeight: platformHeight, vy: -10, x: 150 };
+  for (let tick = 0; tick < 60 * 20 && state.alive; tick++) state = tower.step(oneTower, state, 0, rules);
+  assert.equal(state.alive, true, "with the chase off, the exact same stalling pattern must stay exactly as safe as it always was");
 });
 
 test("a drone never blocks the whole lane — a gap always exists regardless of seed or oscillation phase", () => {
@@ -390,4 +451,45 @@ test("a run that never reaches SUMMIT_SCORE ends as a fall, not a win", () => {
     const { result } = tower.botRun(seed);
     assert.equal(result.state.summited, false, `seed ${seed}: the bot should not be reaching the summit at this score (${result.score})`);
   }
+});
+
+test("chase wave calibration: three bot skill tiers over 200 towers, under the live default rules", () => {
+  // This is the actual data behind CHASE_WAVE_BASE_SPEED/GROWTH/CAP, CHASE_WAVE_BASE_DURATION/GROWTH/CAP and
+  // SUMMIT_SCORE (see their own comments), not an aspirational target. The original design goal was "weak
+  // survives waves 1-2, medium survives 3-5, strong summits 1-5% of the time" — but this reflex bot's own
+  // climbing ceiling (aim at one platform at a time, a fixed per-reaction fumble chance, no lookahead) turns
+  // out to be the real bottleneck, not the chase: even "strong" only reaches score ~3500-4700 in its best
+  // runs over 200 towers (after fixing two real bugs this surfaced — see MAX_HORIZONTAL_REACH's and
+  // botRun's own comments — which roughly quadrupled what this bot could reach in the first place), still
+  // short of the tens of thousands the original band assumed. A human player, who can look ahead and adapt
+  // rather than aim at a single next platform, is expected to climb meaningfully further than this bot does
+  // — so this test locks in what THIS bot actually does (a real, reproducible floor), not the eventual human
+  // experience, which needs real playtesting data to calibrate against (see docs/DESIGN.md's open
+  // questions).
+  const N = 200, maxTicks = 60 * 240;
+  const summary = {};
+  for (const skill of ["weak", "medium", "strong"]) {
+    const scores = [];
+    let summits = 0, anyWaveTriggered = 0;
+    for (let seed = 1; seed <= N; seed++) {
+      const { result } = tower.botRun(seed, maxTicks, tower.DEFAULT_RULES, skill);
+      scores.push(result.score);
+      if (result.state.summited) summits++;
+      if (result.state.waveIndex > 0) anyWaveTriggered++;
+    }
+    scores.sort((a, b) => a - b);
+    summary[skill] = { median: scores[Math.floor(scores.length / 2)], summits, anyWaveTriggered };
+  }
+  // Skill ordering holds even though none of the tiers reach the originally-envisioned wave-survival bands.
+  assert(summary.weak.median < summary.medium.median, `weak's median score (${summary.weak.median}) should be below medium's (${summary.medium.median})`);
+  assert(summary.medium.median < summary.strong.median, `medium's median score (${summary.medium.median}) should be below strong's (${summary.strong.median})`);
+  // The weakest tier should never summit; it is caught by ordinary platforming/drones long before any wave.
+  assert.equal(summary.weak.summits, 0, "a weak bot should never reach SUMMIT_SCORE over 200 towers");
+  // The chase's first wave (score 1000) must be at least reachable (not dead code nobody ever sees) by a
+  // strong run, even though most runs — including most strong ones — never get that far.
+  assert(summary.strong.anyWaveTriggered > 0, "at least one strong-tier run over 200 towers should trigger the chase's first wave");
+  // The summit itself must be rare for even the strongest tier, but not provably impossible — it is
+  // calibrated to sit right at this bot's own measured ceiling (see SUMMIT_SCORE's own comment), so a handful
+  // of lucky/skilled runs out of 200 reaching it is the expected, intended shape.
+  assert(summary.strong.summits <= N * 0.05, `strong-tier summits (${summary.strong.summits}/${N}) should be rare, at most about 5%`);
 });

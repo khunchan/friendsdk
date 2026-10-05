@@ -9,7 +9,7 @@ import "@rarefriends/friendsdk/frame.css";
 import "./style.css";
 import {
   DT, WORLD_WIDTH, PLAYER_RADIUS, HEIGHT_PER_POINT, STAR_POINTS, FALL_MARGIN, REFERENCE_HEIGHT,
-  DRONE_RADIUS, DEFAULT_RULES, CHASE_GRACE_TICKS, chaseHeight, droneX,
+  DRONE_RADIUS, DEFAULT_RULES, CHASE_WAVE_SCORE_STEP, chaseWaveFloor, chaseWaveUrgency, droneX,
   type Dir, type Tower, type RunState, type Transition, type RunRules, type Drone,
   seedForDate, generateTower, startRun, step, scoreOf, botRun, encodeRun, decodeRun,
 } from "./tower";
@@ -266,8 +266,9 @@ function drawSkyline(ctx: CanvasRenderingContext2D, toScreenY: (height: number) 
  * distance unit) at which a milestone banner fires and the background tint shifts; purely presentational —
  * never read by tower.ts, so it cannot affect score or determinism. scoreOf is monotonically non-decreasing
  * over a run (both of its inputs, peakHeight and starPoints, only ever grow), so a zone, once reached, is
- * never re-announced. */
-const MILESTONE_STEP = 1000;
+ * never re-announced. Reuses tower.ts's own CHASE_WAVE_SCORE_STEP directly, rather than a separately-tuned
+ * copy of the same number, so the banner and the chase wave it announces can never drift out of sync. */
+const MILESTONE_STEP = CHASE_WAVE_SCORE_STEP;
 /** Cycled by zone index for a barely-perceptible background shift every MILESTONE_STEP score points — stays
  * inside the dark/near-black register the Arcade Neon palette calls for, not a new bright hue. */
 const ZONE_BACKGROUNDS: readonly string[] = ["#060606", "#06090a", "#060a07", "#0a0906", "#090609"];
@@ -288,10 +289,12 @@ type Run = {
   // both skipped entirely under reduced motion — see the render loop's "FX" block.
   shake: number; hitFlash: number;
   // One-shot "did we already announce this" flags, plus the lava-warning banner's own fade timer (same
-  // pattern as milestoneFlash). lavaWarned fires once per run the instant the chase's grace period ends;
-  // droneSpotted fires once per run the first time any drone is actually visible on screen, not merely
-  // generated into the tower.
-  lavaWarned: boolean; lavaFlash: number; droneSpotted: boolean;
+  // pattern as milestoneFlash). lastWaveWarned holds the highest waveIndex whose "LAVA SURGE!" warning has
+  // already fired, so a wave's ~1.5s warning window (chaseWaveFloor's own `warning` flag stays true the
+  // whole window) triggers the banner/sound exactly once, not every frame it stays true — one per wave, not
+  // one per run, since waves now recur. droneSpotted fires once per run the first time any drone is actually
+  // visible on screen, not merely generated into the tower.
+  lastWaveWarned: number; lavaFlash: number; droneSpotted: boolean;
 };
 
 export default function FriendClimb({ friendId, client, paused }: GameComponentProps) {
@@ -375,7 +378,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     runRef.current = {
       tower, state: startRun(), transitions: [], rules, lastDir: 0, bot, own, imported,
       particles: [], popups: [], starFlash: 0, milestoneZone: 0, milestoneFlash: 0, shake: 0, hitFlash: 0,
-      lavaWarned: false, lavaFlash: 0, droneSpotted: false,
+      lastWaveWarned: 0, lavaFlash: 0, droneSpotted: false,
     };
     setIsFirstRun(!playedBefore.current); playedBefore.current = true;
     setControlHintVisible(true);
@@ -494,11 +497,14 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             // reading, since that was confusing (a "100!" banner next to a HUD reading a different number).
             const zone = Math.floor(scoreOf(run.state) / MILESTONE_STEP);
             if (zone > run.milestoneZone) { run.milestoneZone = zone; run.milestoneFlash = 1; sound.current?.play("reward"); }
-            // Announces the chase the instant its grace period ends — once per run, not every tick it stays
-            // active — so it reads as a clear warning, not background noise.
-            if (run.rules.chase && !run.lavaWarned && run.state.tick >= CHASE_GRACE_TICKS) {
-              run.lavaWarned = true; run.lavaFlash = 1;
-              if (music.current.ctx && live.current.fxOn && !live.current.muted) playLavaWarning(music.current.ctx);
+            // Announces each wave's ~1.5s warning window exactly once (per wave, via lastWaveWarned), not
+            // every frame chaseWaveFloor's `warning` flag happens to read true.
+            if (run.rules.chase && run.state.waveIndex > run.lastWaveWarned) {
+              const wave = chaseWaveFloor(run.state.waveIndex, run.state.waveTriggerTick, run.state.waveBaseHeight, run.state.tick);
+              if (wave.warning) {
+                run.lastWaveWarned = run.state.waveIndex; run.lavaFlash = 1;
+                if (music.current.ctx && live.current.fxOn && !live.current.muted) playLavaWarning(music.current.ctx);
+              }
             }
             if (!run.state.alive && run.state.summited) {
               // A win, not a fall: a reward sound and a bright (not shaking) flash — reusing the same
@@ -513,13 +519,17 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
           }
           if (!run.state.alive) endGame(run.state);
         }
-        // Procedural music: schedules the next beat whenever it's due, tempo tied to how long the chase has
-        // had to build up — never gated by reducedMotion, since this is audio, not an on-screen effect; only
-        // by the Music & FX toggle and the existing mute button. See the layer functions' own comments for
-        // what joins in when.
+        // The chase wave's current floor, computed once per frame and reused by both the music urgency below
+        // and the camera/lava rendering further down, so none of the three can ever read a different moment
+        // of the same wave from each other.
+        const chaseFloor = run?.rules.chase ? chaseWaveFloor(run.state.waveIndex, run.state.waveTriggerTick, run.state.waveBaseHeight, run.state.tick).floor : -Infinity;
+        // Procedural music: schedules the next beat whenever it's due, tempo/intensity tied to the current
+        // chase wave's own urgency (0 outside a wave, ramping up while one is rising) — never gated by
+        // reducedMotion, since this is audio, not an on-screen effect; only by the Music & FX toggle and the
+        // existing mute button. See the layer functions' own comments for what joins in when.
         if (run && active && run.state.alive && live.current.fxOn && !live.current.muted && music.current.ctx && now >= music.current.nextNoteAt) {
           const ctx = music.current.ctx, beat = music.current.noteIndex;
-          const urgency = run.rules.chase ? Math.min(1, Math.max(0, run.state.tick - CHASE_GRACE_TICKS) / (60 * 40)) : 0;
+          const urgency = run.rules.chase ? chaseWaveUrgency(run.state.waveIndex, run.state.waveTriggerTick, run.state.tick) : 0;
           playMusicNote(ctx, MUSIC_SCALE[beat % MUSIC_SCALE.length], urgency);
           if (beat % 2 === 0) playBassNote(ctx, BASS_NOTES[Math.floor(beat / 2) % BASS_NOTES.length], urgency);
           if (run.state.peakHeight > 40) {
@@ -534,12 +544,12 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
         // is already smooth during a climb and simply holds still while falling; see CAMERA_ANCHOR's comment
         // above for why only this exact, undamped formula keeps the screen's bottom edge on the death line.
         // With the chase on, the same bottom-edge-is-the-death-line property has to hold against WHICHEVER of
-        // FALL_MARGIN or the chase is currently stricter — substituting floor = max(peakHeight - FALL_MARGIN,
-        // chaseFloor) into the same derivation gives cameraReference = max(peakHeight, chaseFloor + FALL_MARGIN):
-        // exactly peakHeight whenever FALL_MARGIN is still the binding constraint (unchanged from before), but
-        // pulled up to track the rising lava once it overtakes, so the screen keeps reading "this far below
-        // you is the end" accurately even when that line is the chase, not your own trailing margin.
-        const chaseFloor = run?.rules.chase ? chaseHeight(run.state.tick) : -Infinity;
+        // FALL_MARGIN or the chase wave is currently stricter — substituting floor = max(peakHeight -
+        // FALL_MARGIN, chaseFloor) into the same derivation gives cameraReference = max(peakHeight, chaseFloor
+        // + FALL_MARGIN): exactly peakHeight whenever FALL_MARGIN is still the binding constraint (true
+        // whenever no wave is active, chaseFloor being -Infinity then), but pulled up to track the rising
+        // lava once a wave overtakes it, so the screen keeps reading "this far below you is the end"
+        // accurately even when that line is the chase, not the ordinary trailing margin.
         const cameraReference = run ? Math.max(run.state.peakHeight, chaseFloor + FALL_MARGIN) : 0;
         const toScreenY = (height: number) => CAMERA_ANCHOR - (height - cameraReference);
 
@@ -730,15 +740,15 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             ctx.globalAlpha = 1;
             run.milestoneFlash = Math.max(0, run.milestoneFlash - dt / 0.9);
           }
-          // The chase's own one-shot warning — a longer-held, lower banner than the milestone pop above (it
-          // is a genuine threat announcement, not a score celebration), so the two never visually compete
-          // even if a milestone happens to land around the same moment the grace period ends.
+          // Each wave's own warning — a longer-held, lower banner than the milestone pop above (it is a
+          // genuine threat announcement, not a score celebration), so the two never visually compete even
+          // though a wave's trigger is the exact same milestone crossing that pops the banner above it.
           if (run.lavaFlash > 0) {
             ctx.globalAlpha = Math.min(0.9, run.lavaFlash * 1.3);
             ctx.fillStyle = NEON; ctx.strokeStyle = "#000"; ctx.lineWidth = 4;
             ctx.font = "bold 26px monospace"; ctx.textAlign = "center";
-            ctx.strokeText("LAVA RISING!", VIEW.width / 2, VIEW.height * 0.42);
-            ctx.fillText("LAVA RISING!", VIEW.width / 2, VIEW.height * 0.42);
+            ctx.strokeText("LAVA SURGE!", VIEW.width / 2, VIEW.height * 0.42);
+            ctx.fillText("LAVA SURGE!", VIEW.width / 2, VIEW.height * 0.42);
             ctx.globalAlpha = 1;
             run.lavaFlash = Math.max(0, run.lavaFlash - dt / 1.8);
           }
@@ -923,7 +933,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
       <p className="fc-note">Progress and ghosts last only for this open session — closing or reloading the page clears them. There is no save yet.</p>
       <label className="fc-import">
         Race a friend's code
-        <input value={importCode} onChange={event => setImportCode(event.target.value)} placeholder="FC5...." disabled={paused} />
+        <input value={importCode} onChange={event => setImportCode(event.target.value)} placeholder="FC6...." disabled={paused} />
         <button type="button" disabled={paused || !importCode} onClick={loadImportedCode}>Load</button>
       </label>
       {importError && <p role="alert">{importError}</p>}
@@ -956,7 +966,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
       <label><input type="checkbox" checked={powerupsOn} disabled={paused} onChange={event => setPowerupsOn(event.target.checked)} /> Power-ups</label>
       <label><input type="checkbox" checked={raceHudOn} disabled={paused} onChange={event => setRaceHudOn(event.target.checked)} /> Race HUD</label>
       <label><input type="checkbox" checked={fxOn} disabled={paused} onChange={event => setFxOn(event.target.checked)} /> Music &amp; FX</label>
-      <p className="fc-note">Each toggle is snapshotted into the run and its FC5 code, so a replay always matches how it was recorded.</p>
+      <p className="fc-note">Each toggle is snapshotted into the run and its FC6 code, so a replay always matches how it was recorded.</p>
       <button type="button" disabled={paused} onClick={() => setMenu(null)}>Back</button>
     </GameMenu>}
   </section>;
