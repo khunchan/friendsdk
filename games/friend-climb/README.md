@@ -8,10 +8,11 @@ how high you get before you miss a platform and fall.
 **Everything is free and simulated.** There is no ticket, no RF cost and no reward. An owned Generations NFT
 is still required to play; the SDK runtime checks it, exactly as for every other game on the platform.
 
-**Status: stage 0, a free prototype.** This is the first of three planned stages (see `docs/DESIGN.md` for
-stages 1–2): shared leaderboards, ghosts of other players and paid tournaments all need a backend FriendSDK
-does not have yet. Nothing here is a finished submission; it exists to find out whether the climb itself is
-fun before any of that is built.
+**Status: stage 0, a free prototype.** This is the first of three planned stages (see `docs/DESIGN.md`, which
+now has a drafted plan for stages 1–2 — shared leaderboards, ghosts of other players and a paid daily
+tournament — none of it implemented yet, all of it needing a backend FriendSDK v0.1.4 does not have). Nothing
+here is a finished submission; it exists to find out whether the climb itself is fun before any of that is
+built.
 
 ## How it uses Rare Friends
 
@@ -64,7 +65,10 @@ toggle (default on) so you can compare what each one actually adds:
   so one overlap is one hit, not one hit per tick. A drone's own width is kept well under the lane's full
   width on purpose, so a gap big enough to fit through always exists regardless of seed or where in its
   oscillation it currently is — `tower.test.mjs` checks this algebraically (a fixed-width guarantee, not a
-  per-seed simulation), plus a dedicated test for the knock-down-then-cooldown behavior itself.
+  per-seed simulation), plus a dedicated test for the knock-down-then-cooldown behavior itself. The first
+  drone that actually enters view, and the exact moment the chase's grace period ends, each get a one-shot
+  cue (see "Making the chase and drones noticeable" below) — the first playtest round found both mechanics
+  were working but essentially invisible in practice, not just unannounced.
 - **Power-ups**, placed on specific platforms at generation time, deterministic like stars and springs: a
   **rocket** (a steady, obstruction-free climb for about 2.5 seconds), a **shield** (cancels exactly one
   otherwise-fatal fall, then is gone), and a **magnet** (auto-collects any star within reach for about 5
@@ -74,11 +78,13 @@ toggle (default on) so you can compare what each one actually adds:
 - **Race HUD.** A small second readout next to the score — "1st of N" among everyone sharing the screen right
   now (the bot, your own past runs, any pasted code) plus a direct delta against the bot specifically, since
   the bot is the one opponent every player always has. Purely presentational.
-- **Music & FX.** A short procedural arpeggio, synthesized directly with WebAudio (never a sampled or
-  licensed track), whose tempo itself visibly/audibly speeds up the longer the chase has had to build up —
-  plus screen shake and a brief flash on a hit or a death. Screen shake is skipped entirely under Reduce
-  Motion, matching that setting's existing "no shake" bullet; the music keeps going either way, muted by the
-  same Sound button as everything else.
+- **Music & FX.** Three procedural layers, synthesized directly with WebAudio (never a sampled or licensed
+  track): a melody arpeggio present from the start, a bass root under every other beat, and a kick/hihat pair
+  that only joins in once the climb has made real progress — so the *texture* visibly thickens as a run goes
+  on, not just the tempo, which itself still ramps up the longer the chase has had to build. Screen shake and
+  a brief flash fire on a hit or a death (a different, non-shaking flash plus a reward sound on reaching the
+  summit, never the "something hit you" cue). Screen shake is skipped entirely under Reduce Motion; the music
+  keeps going either way, muted by the same Sound button as everything else.
 
 Chase, drones and power-ups all change what a given seed and recorded moves replay to, so each run snapshots
 its own current Settings into a `RunRules` the moment it starts and encodes that into its run code (see
@@ -86,6 +92,35 @@ below) — a ghost (the bot, your own past runs, a pasted code) always replays u
 recorded with, never whatever you currently have toggled, so two players comparing the same code never get a
 different outcome depending on their own Settings. Race HUD and Music & FX never affect the physics at all,
 so they are not part of a run's rules or its code.
+
+### Making the chase and drones noticeable
+
+First playtest round: both mechanics were confirmed working (Settings defaults on, build current, chase
+provably catches a stalled Friend) but were, in practice, essentially never encountered or understood. Two
+separate problems, both now fixed:
+
+1. **`DRONE_START_HEIGHT` was tuned too high.** Driving the game's own bot (a scripted, reasonably competent
+   player, not a specifically weak one) through the real build repeatedly showed death around height 130–310
+   under the chase's pace — the original `DRONE_START_HEIGHT=700` meant drones essentially never appeared in
+   an actual run, independent of player skill. Lowered to 220 (and `DRONE_SPACING` 420→300) — a data-driven
+   balance fix grounded in the bot's own measured death heights, not a per-player difficulty slider.
+2. **Neither mechanic announced itself.** A player dying to the chase or a drone had no way to tell that was
+   what happened, as opposed to an ordinary missed platform. Now: the instant the chase's grace period ends,
+   a "LAVA RISING!" banner and a rising rumble tone fire once per run; the first time any drone is actually
+   visible on screen (not merely generated into the tower), a short two-note alert sting fires once per run.
+   Neither is gated by `raceHudOn`/`fxOn` for the lava case (it is drawn as a plain banner, not an "FX") —
+   both sounds specifically respect the Music & FX toggle and the Sound button, same as the rest of the audio.
+
+### The summit
+
+Reaching **`SUMMIT_SCORE`** (currently 25000, a plain constant in `tower.ts` chosen to be easy to retune once
+there is real playtesting data on how long that actually takes) ends the run as a **win**, not a fall — a
+"SUMMIT!" banner on the result screen, a reward sound instead of the usual impact, and the run's own
+deterministic climb time (`tick / 60` seconds, exactly reproducible from the run code, never a wall-clock
+reading) recorded alongside the score. A summited `RunState` freezes exactly like a fallen one does (`alive`
+is `false` either way); `state.summited` is what tells the two apart. This is also why the run code moved to
+`FC5` (see Known limits) — reaching the summit is a second, new way a run can end, something older code
+formats never had to represent at all.
 
 ## The camera and the death boundary
 
@@ -188,15 +223,19 @@ rate — `tower.test.mjs` checks this too. That determinism is also what makes t
   ever); the run code version moved to `FC2`. v2 had no springs or combo bonus; adding them in v3 (`FC3`)
   changes what the same seed and recorded moves replay to, same as the v1 fix did. v3 had no chase, drones or
   power-ups; adding them in v4 (`FC4`) changes survival itself, not just scoring, and also added `RunRules`
-  (which of those three were active) as a new thing a code has to carry. All three older prefixes are now
-  refused with their own clear message rather than replayed to a different score.
+  (which of those three were active) as a new thing a code has to carry. v4 had no summit, and a different
+  `DRONE_START_HEIGHT`/`DRONE_SPACING` (which shifts the seeded random() sequence for everything generated
+  after a tower's first drone, same as v2→v3 silently reshaping towers when spring/power-up fields were
+  added) — bumped to `FC5`. All four older prefixes are now refused with their own clear message rather than
+  replayed to a different score.
 - **Moving platforms were considered for the "jumping feels empty" pass and not built.** They would need
   their own reachability proof added to `tower.test.mjs` — a moving platform's catchable window changes the
   gap math everywhere a static platform's doesn't — more scope than the five mechanics built this round. A
   good candidate for a follow-up once those have been played with for a while.
 - **Chase/drone/power-up tuning is a first pass**, same disclaimer as the bot's fumble rate above — the exact
-  numbers (`CHASE_BASE_SPEED`, `CHASE_ACCEL`, `DRONE_SPACING`, power-up pickup odds) are reasoned-about
-  starting points, not balanced against real play yet.
+  numbers (`CHASE_BASE_SPEED`, `CHASE_ACCEL`, `DRONE_SPACING`, power-up pickup odds, `SUMMIT_SCORE`) are
+  reasoned-about starting points, not balanced against real play yet. `DRONE_START_HEIGHT` specifically was
+  already revised once, from measured bot death heights (see "Making the chase and drones noticeable" above).
 
 ## Checks
 
@@ -204,7 +243,7 @@ Run on 2026-10-05 with SDK v0.1.4 and Node.js 22, from the SDK root:
 
 | Command | Result |
 | --- | --- |
-| `node --test games/friend-climb/tower.test.mjs` | 24 tests: replay, encode/decode (incl. RunRules), run-code version rejection, reachability (platforms and drones), tower safety, camera/death-boundary alignment, springs, combo, chase, drones, rocket, shield, magnet, the bot, scoring |
+| `node --test games/friend-climb/tower.test.mjs` | 26 tests: replay, encode/decode (incl. RunRules), run-code version rejection, reachability (platforms and drones), tower safety, camera/death-boundary alignment, springs, combo, chase, drones, rocket, shield, magnet, summit, the bot, scoring |
 | `node scripts/dev-game.mjs check games/friend-climb` (`friendsdk check`) | game definition and build |
 | `node scripts/dev-game.mjs test games/friend-climb` (`friendsdk test`) | the SDK's automated browser check with its mock wallet |
 | `node games/friend-climb/check-browser.mjs` | this game's own browser check at 1100 px and 360 px |
@@ -219,4 +258,6 @@ framework-free, unit-tested on its own), `tower.test.mjs`, `check-browser.mjs`, 
 the same pattern `examples/scrolling-world` uses for a free exploration game), `game/platform.ts` (the three
 seams between this game and whatever platform runs it — identity, persistence, randomness — modeled directly
 on `penalty-kings`' own `game/platform.ts`, the pattern Rare Friends actually used to fork that game onto SDK
-v0.2.0 with real money; see its own file comment for what is and is not an integration point today).
+v0.2.0 with real money; see its own file comment for what is and is not an integration point today),
+`docs/DESIGN.md` (stages 1–2: shared persistence/leaderboards and the proposed paid daily tournament
+tokenomics — a plan, nothing implemented).

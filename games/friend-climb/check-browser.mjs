@@ -45,7 +45,12 @@ async function driveAndWatchCamera(page, canvas, transitions, seconds) {
     const y = Number(await canvas.getAttribute('data-player-screen-y'));
     const height = Number(await canvas.getAttribute('data-height'));
     const hud = await page.frameLocator('iframe').locator('.fc-top span').first().textContent();
-    samples.push({ t: Date.now() - started, y, height, hud });
+    // data-alive, not data-screen: endGame() calls setScreen("result") the same frame the physics loop
+    // detects death, but data-screen is only set from React's own screen state, which only updates on React's
+    // NEXT render — one or more frames later. data-alive is written straight from run.state.alive in the same
+    // imperative loop that runs the physics itself, so it never has that lag.
+    const alive = (await canvas.getAttribute('data-alive')) === 'true';
+    samples.push({ t: Date.now() - started, y, height, hud, alive });
   };
   // Checked far more often than samples are taken (every ~40ms here, vs. a sample roughly every 500ms): the
   // bot's own transitions (tower.ts's botRun) can be as close together as ~167ms (10 ticks) apart, so
@@ -65,8 +70,8 @@ async function driveAndWatchCamera(page, canvas, transitions, seconds) {
     // Real-time keyboard dispatch can still drift onto a path that ends the run before `seconds` is up, even
     // with the tighter polling above (see tower.test.mjs for the exact, drift-free determinism proof) — stop
     // driving a run that has already ended rather than spamming keys at the result screen and collecting
-    // samples from a frozen, no-longer-alive state.
-    if ((await canvas.getAttribute('data-screen')) !== 'play') break;
+    // samples from a frozen, no-longer-alive state. data-alive, not data-screen — see sample()'s own comment.
+    if ((await canvas.getAttribute('data-alive')) !== 'true') break;
     await page.waitForTimeout(40);
   }
   if (codeFor(dir)) await page.keyboard.up(codeFor(dir));
@@ -115,8 +120,9 @@ try {
 
     // Race a friend's code: a mismatched-tower code shows a clear warning, garbage shows a decode error, and
     // codes from any pre-fix version (FC1's star-scoring bug, FC2's missing springs/combo bonus, FC3's
-    // missing chase/drones/power-ups) are refused by name instead of being replayed to a wrong score.
-    await child.getByLabel("Race a friend's code").fill('FC4.79999.3R!a');
+    // missing chase/drones/power-ups, FC4's missing summit and different drone layout) are refused by name
+    // instead of being replayed to a wrong score.
+    await child.getByLabel("Race a friend's code").fill('FC5.79999.3R!a');
     await child.getByRole('button', { name: 'Load' }).click();
     await child.getByText('different tower', { exact: false }).waitFor();
     await child.getByLabel("Race a friend's code").fill('not a real code');
@@ -129,6 +135,9 @@ try {
     await child.getByRole('button', { name: 'Load' }).click();
     await child.getByText('older version', { exact: false }).waitFor();
     await child.getByLabel("Race a friend's code").fill('FC3.5.3R!a');
+    await child.getByRole('button', { name: 'Load' }).click();
+    await child.getByText('older version', { exact: false }).waitFor();
+    await child.getByLabel("Race a friend's code").fill('FC4.5.3R!a');
     await child.getByRole('button', { name: 'Load' }).click();
     await child.getByText('older version', { exact: false }).waitFor();
     await child.getByLabel("Race a friend's code").fill('');
@@ -210,7 +219,7 @@ try {
     assert.equal(total, heightPoints + starPoints, 'the breakdown must add up to the total');
     assert.equal(total, score, 'the breakdown total must match the score heading');
     const code = await child.getByLabel('Run code to share').inputValue();
-    assert.match(code, /^FC4\.[0-7][0-9a-z]+\.[0-9a-zLNR]*![0-9a-z]+$/, 'The shared run code has the expected shape');
+    assert.match(code, /^FC5\.[0-7][0-9a-z]+\.[0-9a-zLNR]*![0-9a-z]+$/, 'The shared run code has the expected shape');
     await assertBounds(page); await gameBounds(child);
 
     // Clipboard access may or may not be granted inside the sandboxed frame; either outcome must be handled.
@@ -248,13 +257,24 @@ try {
       // height <= peakHeight always keeps screen y >= CAMERA_ANCHOR, and alive (height >= peakHeight -
       // FALL_MARGIN) always keeps it <= REFERENCE_HEIGHT — an exact pair of bounds, not a heuristic band.
       const cameraAnchor = tower.REFERENCE_HEIGHT - tower.FALL_MARGIN;
+      // A sample taken right as (or just after) death — now more likely to coincide with this run's window
+      // than it used to be, since DRONE_START_HEIGHT was lowered to make drones actually reachable in
+      // practice (see README's "Making the chase and drones noticeable") — can legitimately land a little
+      // past REFERENCE_HEIGHT: the same single-tick overshoot tower.test.mjs's own exact algebraic test
+      // already bounds and explains, not a camera regression. Only the terminal, no-longer-alive sample gets
+      // that wider allowance; every sample taken while still alive keeps the tight, near-exact bound.
+      const deathOvershoot = Math.sqrt(2 * tower.GRAVITY * tower.FALL_MARGIN) * tower.DT + 15;
       for (const s of samples) {
-        assert(s.y >= cameraAnchor - 5 && s.y <= tower.REFERENCE_HEIGHT + 5,
-          `at t=${s.t}ms the Friend's screen y (${s.y.toFixed(1)}) left the [${cameraAnchor}, ${tower.REFERENCE_HEIGHT}] band the camera guarantees`);
-        // Score is floor(peakHeight / 10) + starPoints; peakHeight never decreases, so score never goes negative.
-        assert.match(s.hud, /^Score \d+ · ★\d+$/, `at t=${s.t}ms the HUD did not read "Score N · ★S" (got "${s.hud}")`);
+        const upperBound = tower.REFERENCE_HEIGHT + (s.alive ? 5 : deathOvershoot);
+        assert(s.y >= cameraAnchor - 5 && s.y <= upperBound,
+          `at t=${s.t}ms the Friend's screen y (${s.y.toFixed(1)}) left the [${cameraAnchor}, ${upperBound.toFixed(1)}] band the camera guarantees (alive=${s.alive})`);
+        // Only while still alive: once the run has ended, the HUD correctly reverts to "Friend Climb" (the
+        // same static title it shows on the picker/result screens) — that is not a bug to assert against,
+        // the terminal sample just genuinely caught that already-over state, same as the y bound above.
+        if (s.alive) assert.match(s.hud, /^Score \d+ · ★\d+$/, `at t=${s.t}ms the HUD did not read "Score N · ★S" (got "${s.hud}")`);
       }
-      const scores = samples.map(s => Number(s.hud.match(/^Score (\d+)/)[1]));
+      const scores = samples.filter(s => s.alive).map(s => Number(s.hud.match(/^Score (\d+)/)[1]));
+      assert(scores.length >= 2, `expected at least 2 alive samples to compare score growth across, got ${scores.length}`);
       assert(scores.some((value, i) => i > 0 && value > scores[i - 1]), 'the HUD score must visibly change between samples, not sit frozen at "Score 0"');
       assert(scores[scores.length - 1] > scores[0], `the HUD score must grow over the climb (${scores[0]} → ${scores[scores.length - 1]})`);
       assert(samples[samples.length - 1].height > 20, `expected real height from bot-driven climbing, got ${samples[samples.length - 1].height}`);

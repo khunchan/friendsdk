@@ -43,6 +43,7 @@
 .fc-status{justify-content:center}
 .fc-status p{margin:0}
 .fc-pick h1,.fc-result h1{margin:0;font-size:22px;color:#ccff00;text-shadow:0 0 6px rgba(204,255,0,.5)}
+.fc-summit{font-size:30px!important;text-shadow:0 0 14px rgba(204,255,0,.9),0 0 28px rgba(204,255,0,.5)!important}
 .fc-pick p,.fc-result p{max-width:320px;margin:0}
 .fc-note{font-size:11px;opacity:.75}
 .fc-import{display:flex;flex-direction:column;gap:6px;width:min(320px,100%)}

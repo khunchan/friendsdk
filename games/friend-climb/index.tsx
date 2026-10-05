@@ -66,6 +66,13 @@ function wrappedScreenXs(x: number, laneMargin: number): number[] {
   if (x > WORLD_WIDTH - PLAYER_RADIUS) xs.push(laneMargin + x - WORLD_WIDTH);
   return xs;
 }
+/** tick / 60 is the run's own deterministic elapsed time in seconds — never a wall-clock reading, so a climb
+ * time is exactly reproducible from a replayed run code, same as the score is. */
+function formatClimbTime(ticks: number): string {
+  const totalSeconds = Math.floor(ticks / 60);
+  const minutes = Math.floor(totalSeconds / 60), seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
 function spawnBurst(particles: Particle[], x: number, y: number, color: string, count: number) {
   for (let index = 0; index < count; index++) {
     const angle = Math.PI * (0.15 + 0.7 * Math.random());
@@ -73,10 +80,14 @@ function spawnBurst(particles: Particle[], x: number, y: number, color: string, 
   }
 }
 
-// --- Procedural music: a short plucked arpeggio note, synthesized directly with WebAudio (never a sampled or
-// licensed track) — the chase render loop below schedules these at an interval that shrinks as the chase
-// accelerates, so the tempo itself audibly ramps up with the on-screen threat, not just a louder mix. ---
-const MUSIC_SCALE = [220, 261.63, 329.63, 392, 440, 523.25]; // A minor pentatonic-ish, kept small and calm
+// --- Procedural music: synthesized directly with WebAudio (never a sampled or licensed track), three layers
+// that build up rather than one flat loop — a melody arpeggio present from the start, a bass root under
+// every other beat, and a kick/hihat pair that only joins in once the climb has made real progress (peakHeight
+// > 40), so the texture visibly thickens as the run goes on, not just the tempo. The render loop's scheduler
+// shrinks the beat interval as the chase accelerates, so tempo itself ramps up with the on-screen threat too. ---
+const MUSIC_SCALE = [220, 261.63, 329.63, 392, 440, 523.25]; // melody: A minor pentatonic-ish, kept calm
+const BASS_NOTES = [55, 65.41, 73.42, 87.31]; // a simple four-chord root progression, an octave+ below the melody
+
 function playMusicNote(ctx: AudioContext, frequency: number, urgency: number) {
   const now = ctx.currentTime;
   const osc = ctx.createOscillator(), gain = ctx.createGain();
@@ -89,6 +100,72 @@ function playMusicNote(ctx: AudioContext, frequency: number, urgency: number) {
   gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
   osc.connect(gain); gain.connect(ctx.destination);
   osc.start(now); osc.stop(now + duration + 0.02);
+}
+function playBassNote(ctx: AudioContext, frequency: number, urgency: number) {
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator(), gain = ctx.createGain();
+  osc.type = "sine"; osc.frequency.value = frequency;
+  const peak = 0.07 + 0.04 * urgency;
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(peak, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+  osc.connect(gain); gain.connect(ctx.destination);
+  osc.start(now); osc.stop(now + 0.37);
+}
+function playKick(ctx: AudioContext) {
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator(), gain = ctx.createGain();
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(150, now);
+  osc.frequency.exponentialRampToValueAtTime(42, now + 0.12);
+  gain.gain.setValueAtTime(0.22, now);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+  osc.connect(gain); gain.connect(ctx.destination);
+  osc.start(now); osc.stop(now + 0.16);
+}
+function buildNoiseBuffer(ctx: AudioContext): AudioBuffer {
+  const buffer = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * 0.2)), ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let index = 0; index < data.length; index++) data[index] = Math.random() * 2 - 1;
+  return buffer;
+}
+function playHihat(ctx: AudioContext, noiseBuffer: AudioBuffer) {
+  const now = ctx.currentTime;
+  const source = ctx.createBufferSource(); source.buffer = noiseBuffer;
+  const filter = ctx.createBiquadFilter(); filter.type = "highpass"; filter.frequency.value = 6000;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.05, now);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+  source.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+  source.start(now); source.stop(now + 0.06);
+}
+/** A short, bright two-note sting for a drone's first sighting — distinct from the plucked melody notes, so
+ * it reads as an alert, not just another beat. */
+function playDroneAlert(ctx: AudioContext) {
+  const now = ctx.currentTime;
+  for (const [offset, frequency] of [[0, 740], [0.09, 988]] as const) {
+    const osc = ctx.createOscillator(), gain = ctx.createGain();
+    osc.type = "square"; osc.frequency.value = frequency;
+    gain.gain.setValueAtTime(0, now + offset);
+    gain.gain.linearRampToValueAtTime(0.06, now + offset + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.08);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(now + offset); osc.stop(now + offset + 0.1);
+  }
+}
+/** A low, rising rumble for the chase's own grace period ending — one long tone, not a beat, so it reads as
+ * an announcement rather than part of the music's own pulse. */
+function playLavaWarning(ctx: AudioContext) {
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator(), gain = ctx.createGain();
+  osc.type = "sawtooth";
+  osc.frequency.setValueAtTime(70, now);
+  osc.frequency.linearRampToValueAtTime(140, now + 0.6);
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(0.09, now + 0.1);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.7);
+  osc.connect(gain); gain.connect(ctx.destination);
+  osc.start(now); osc.stop(now + 0.72);
 }
 
 // --- Arcade Neon rendering: everything below builds small offscreen bitmaps ONCE (sprite outline, glow dot,
@@ -210,6 +287,11 @@ type Run = {
   // Screen shake magnitude (decaying) and a brief full-canvas color flash, both purely presentational and
   // both skipped entirely under reduced motion — see the render loop's "FX" block.
   shake: number; hitFlash: number;
+  // One-shot "did we already announce this" flags, plus the lava-warning banner's own fade timer (same
+  // pattern as milestoneFlash). lavaWarned fires once per run the instant the chase's grace period ends;
+  // droneSpotted fires once per run the first time any drone is actually visible on screen, not merely
+  // generated into the tower.
+  lavaWarned: boolean; lavaFlash: number; droneSpotted: boolean;
 };
 
 export default function FriendClimb({ friendId, client, paused }: GameComponentProps) {
@@ -233,6 +315,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
   const [ghosts, setGhosts] = useState<readonly RunRecord[]>([]); // this session's own past runs, newest first
   const [lastScore, setLastScore] = useState(0), [lastCode, setLastCode] = useState("");
   const [lastHeightPoints, setLastHeightPoints] = useState(0), [lastStars, setLastStars] = useState(0), [lastStarPoints, setLastStarPoints] = useState(0);
+  const [lastSummited, setLastSummited] = useState(false), [lastClimbTicks, setLastClimbTicks] = useState(0);
   const [importCode, setImportCode] = useState(""), [importError, setImportError] = useState("");
   const [importedGhost, setImportedGhost] = useState<RunRecord | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
@@ -253,7 +336,9 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
   // Created lazily on the same user gesture that unlocks the SDK sound kit (browsers block audio without one);
   // disposed on unmount. Scheduling state (nextNoteAt/noteIndex) lives alongside it so the render loop below
   // can check "is it time for the next note" cheaply every frame without its own separate interval timer.
-  const music = useRef<{ ctx: AudioContext | null; nextNoteAt: number; noteIndex: number }>({ ctx: null, nextNoteAt: 0, noteIndex: 0 });
+  const music = useRef<{ ctx: AudioContext | null; nextNoteAt: number; noteIndex: number; noiseBuffer: AudioBuffer | null }>({
+    ctx: null, nextNoteAt: 0, noteIndex: 0, noiseBuffer: null,
+  });
   useEffect(() => () => { void music.current.ctx?.close(); }, []);
   useEffect(() => {
     const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -290,6 +375,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     runRef.current = {
       tower, state: startRun(), transitions: [], rules, lastDir: 0, bot, own, imported,
       particles: [], popups: [], starFlash: 0, milestoneZone: 0, milestoneFlash: 0, shake: 0, hitFlash: 0,
+      lavaWarned: false, lavaFlash: 0, droneSpotted: false,
     };
     setIsFirstRun(!playedBefore.current); playedBefore.current = true;
     setControlHintVisible(true);
@@ -307,6 +393,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     });
     setBest(previous => ({ ...previous, [seed]: Math.max(previous[seed] ?? 0, score) }));
     setLastScore(score); setLastHeightPoints(Math.floor(state.peakHeight / HEIGHT_PER_POINT)); setLastStars(state.stars); setLastStarPoints(state.starPoints);
+    setLastSummited(state.summited); setLastClimbTicks(state.tick);
     setLastCode(encodeRun(seed, transitions, score, rules)); setCopyFailed(false); setScreen("result");
   }
 
@@ -407,21 +494,39 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             // reading, since that was confusing (a "100!" banner next to a HUD reading a different number).
             const zone = Math.floor(scoreOf(run.state) / MILESTONE_STEP);
             if (zone > run.milestoneZone) { run.milestoneZone = zone; run.milestoneFlash = 1; sound.current?.play("reward"); }
-            if (!run.state.alive) {
+            // Announces the chase the instant its grace period ends — once per run, not every tick it stays
+            // active — so it reads as a clear warning, not background noise.
+            if (run.rules.chase && !run.lavaWarned && run.state.tick >= CHASE_GRACE_TICKS) {
+              run.lavaWarned = true; run.lavaFlash = 1;
+              if (music.current.ctx && live.current.fxOn && !live.current.muted) playLavaWarning(music.current.ctx);
+            }
+            if (!run.state.alive && run.state.summited) {
+              // A win, not a fall: a reward sound and a bright (not shaking) flash — reusing the same
+              // run.hitFlash field for the full-canvas pulse, but never run.shake, which is specifically a
+              // "something hit you" cue and would read as a disaster right when the player just won.
+              sound.current?.play("reward");
+              if (!live.current.reducedMotion && live.current.fxOn) run.hitFlash = 1;
+            } else if (!run.state.alive) {
               sound.current?.play("impact", { volume: 0.7 });
               if (!live.current.reducedMotion && live.current.fxOn) { run.shake = 1; run.hitFlash = 1; }
             }
           }
           if (!run.state.alive) endGame(run.state);
         }
-        // Procedural music: schedules the next plucked note whenever it's due, tempo tied to how long the
-        // chase has had to build up (see MUSIC_SCALE's comment) — never gated by reducedMotion, since this is
-        // audio, not an on-screen effect; only by the Music & FX toggle and the existing mute button.
+        // Procedural music: schedules the next beat whenever it's due, tempo tied to how long the chase has
+        // had to build up — never gated by reducedMotion, since this is audio, not an on-screen effect; only
+        // by the Music & FX toggle and the existing mute button. See the layer functions' own comments for
+        // what joins in when.
         if (run && active && run.state.alive && live.current.fxOn && !live.current.muted && music.current.ctx && now >= music.current.nextNoteAt) {
+          const ctx = music.current.ctx, beat = music.current.noteIndex;
           const urgency = run.rules.chase ? Math.min(1, Math.max(0, run.state.tick - CHASE_GRACE_TICKS) / (60 * 40)) : 0;
-          const note = MUSIC_SCALE[music.current.noteIndex % MUSIC_SCALE.length];
-          playMusicNote(music.current.ctx, note, urgency);
-          music.current.noteIndex++;
+          playMusicNote(ctx, MUSIC_SCALE[beat % MUSIC_SCALE.length], urgency);
+          if (beat % 2 === 0) playBassNote(ctx, BASS_NOTES[Math.floor(beat / 2) % BASS_NOTES.length], urgency);
+          if (run.state.peakHeight > 40) {
+            if (!music.current.noiseBuffer) music.current.noiseBuffer = buildNoiseBuffer(ctx);
+            if (beat % 2 === 0) playKick(ctx); else playHihat(ctx, music.current.noiseBuffer);
+          }
+          music.current.noteIndex = beat + 1;
           music.current.nextNoteAt = now + (420 - 220 * urgency);
         }
         // The camera's world-height reference is the run's own peakHeight, read directly every frame — no
@@ -537,6 +642,13 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             for (const drone of run.tower.drones) {
               const y = toScreenY(drone.height);
               if (y < -20 || y > VIEW.height + 20) continue;
+              // The one-shot "first drone spotted" alert uses the strict on-screen bounds (not the wider
+              // culling padding just above), so it fires right as a drone genuinely becomes visible, not
+              // slightly before — a short, distinct sting, not a repeating per-drone sound.
+              if (!run.droneSpotted && y >= 0 && y <= VIEW.height) {
+                run.droneSpotted = true;
+                if (music.current.ctx && live.current.fxOn && !live.current.muted) playDroneAlert(music.current.ctx);
+              }
               const dx = LANE_MARGIN + droneX(drone, run.state.tick);
               ctx.fillStyle = "#111"; ctx.strokeStyle = NEON; ctx.lineWidth = 2;
               ctx.beginPath(); ctx.roundRect(dx - DRONE_RADIUS, y - DRONE_RADIUS * 0.6, DRONE_RADIUS * 2, DRONE_RADIUS * 1.2, 4);
@@ -618,6 +730,18 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
             ctx.globalAlpha = 1;
             run.milestoneFlash = Math.max(0, run.milestoneFlash - dt / 0.9);
           }
+          // The chase's own one-shot warning — a longer-held, lower banner than the milestone pop above (it
+          // is a genuine threat announcement, not a score celebration), so the two never visually compete
+          // even if a milestone happens to land around the same moment the grace period ends.
+          if (run.lavaFlash > 0) {
+            ctx.globalAlpha = Math.min(0.9, run.lavaFlash * 1.3);
+            ctx.fillStyle = NEON; ctx.strokeStyle = "#000"; ctx.lineWidth = 4;
+            ctx.font = "bold 26px monospace"; ctx.textAlign = "center";
+            ctx.strokeText("LAVA RISING!", VIEW.width / 2, VIEW.height * 0.42);
+            ctx.fillText("LAVA RISING!", VIEW.width / 2, VIEW.height * 0.42);
+            ctx.globalAlpha = 1;
+            run.lavaFlash = Math.max(0, run.lavaFlash - dt / 1.8);
+          }
           if (run.rules.chase) {
             // The chase itself IS the death boundary whenever it is ahead of FALL_MARGIN (see cameraReference
             // above), so its screen position is exactly toScreenY(chaseFloor) — never a separate guess. Drawn
@@ -696,6 +820,13 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
         node.dataset.height = run ? run.state.height.toFixed(1) : "0";
         node.dataset.score = run ? String(scoreOf(run.state)) : "0";
         node.dataset.screen = live.current.screen;
+        // Direct physics truth, not routed through React's own screen state the way data-screen is above —
+        // endGame() calls setScreen("result") the same frame the physics loop detects death, but live.current
+        // (and so data-screen) only updates on React's NEXT render, one or more frames later. A test sampling
+        // right at that boundary needs this to tell "still truly alive" from "about to show as dead" without
+        // that lag — data-screen alone can read "play" for a frame or more after run.state.alive already
+        // flipped false.
+        node.dataset.alive = run ? String(run.state.alive) : "";
         // Lets check-browser.mjs catch "the camera lost the Friend" without reading pixels: the Friend must
         // always be within the visible canvas while a run is alive, never scrolled off by a stale camera.
         node.dataset.playerScreenY = run ? toScreenY(run.state.height).toFixed(1) : "";
@@ -792,7 +923,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
       <p className="fc-note">Progress and ghosts last only for this open session — closing or reloading the page clears them. There is no save yet.</p>
       <label className="fc-import">
         Race a friend's code
-        <input value={importCode} onChange={event => setImportCode(event.target.value)} placeholder="FC3...." disabled={paused} />
+        <input value={importCode} onChange={event => setImportCode(event.target.value)} placeholder="FC5...." disabled={paused} />
         <button type="button" disabled={paused || !importCode} onClick={loadImportedCode}>Load</button>
       </label>
       {importError && <p role="alert">{importError}</p>}
@@ -800,7 +931,9 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
     </div>}
 
     {!status && screen === "result" && <div className="fc-result">
+      {lastSummited && <h1 className="fc-summit">SUMMIT!</h1>}
       <h1>Score: {lastScore}</h1>
+      {lastSummited && <p>Reached the summit in {formatClimbTime(lastClimbTicks)} — the deterministic climb time encoded right alongside the score, same as everything else here.</p>}
       <p>Height {lastHeightPoints} + {lastStars} star{lastStars === 1 ? "" : "s"} ({lastStarPoints}) = {lastScore}</p>
       <p>Best this session on this tower: {best[seed] ?? lastScore}. Progress resets when this page reloads.</p>
       <button type="button" disabled={paused} onClick={() => startGame(seed)}>Play this tower again</button>
@@ -823,7 +956,7 @@ export default function FriendClimb({ friendId, client, paused }: GameComponentP
       <label><input type="checkbox" checked={powerupsOn} disabled={paused} onChange={event => setPowerupsOn(event.target.checked)} /> Power-ups</label>
       <label><input type="checkbox" checked={raceHudOn} disabled={paused} onChange={event => setRaceHudOn(event.target.checked)} /> Race HUD</label>
       <label><input type="checkbox" checked={fxOn} disabled={paused} onChange={event => setFxOn(event.target.checked)} /> Music &amp; FX</label>
-      <p className="fc-note">Each toggle is snapshotted into the run and its FC4 code, so a replay always matches how it was recorded.</p>
+      <p className="fc-note">Each toggle is snapshotted into the run and its FC5 code, so a replay always matches how it was recorded.</p>
       <button type="button" disabled={paused} onClick={() => setMenu(null)}>Back</button>
     </GameMenu>}
   </section>;

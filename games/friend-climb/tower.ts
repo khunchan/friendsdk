@@ -63,8 +63,13 @@ export function chaseHeight(tick: number): number {
 // every drone, regardless of seed or oscillation phase — tower.test.mjs checks this algebraically, not by
 // simulating paths. ---
 export const DRONE_RADIUS = 18;
-export const DRONE_START_HEIGHT = 700; // a grace zone near the ground with no drones at all
-export const DRONE_SPACING = 420; // roughly one drone every this many height units past DRONE_START_HEIGHT
+// Measured, not guessed: driving the game's own bot (a fully scripted, reasonably competent player) through
+// the real build repeatedly showed death around height 130-310 under the chase's default pace — a first pass
+// at DRONE_START_HEIGHT=700 meant drones essentially never appeared in an actual run, independent of how
+// skilled the player was. Lowered to a height most runs genuinely reach, a data-driven balance fix, not a
+// per-player difficulty slider.
+export const DRONE_START_HEIGHT = 220;
+export const DRONE_SPACING = 300; // roughly one drone every this many height units past DRONE_START_HEIGHT
 export const DRONE_HIT_COOLDOWN_TICKS = 90; // ~1.5s of invulnerability after a hit, so one overlap is one hit
 export type Drone = Readonly<{ height: number; x0: number; amplitude: number; periodTicks: number; phase: number }>;
 /** A drone's horizontal position at a given tick — pure, like chaseHeight, so both renderer and tests agree. */
@@ -79,6 +84,11 @@ export const ROCKET_SPEED = 900; // px/s straight up while active — faster and
 export const ROCKET_DURATION_TICKS = 150; // 2.5s
 export const MAGNET_DURATION_TICKS = 300; // 5s
 export const MAGNET_RADIUS = 70; // world-units a star can be auto-collected from without actually landing on it
+
+/** The score that ends a run as a win ("SUMMIT!") instead of a fall. A plain constant on purpose, not derived
+ * from anything else, so it is trivial to retune (25000 vs 50000 vs some other value) once there has been
+ * real playtesting to judge how long that actually takes at a realistic pace. */
+export const SUMMIT_SCORE = 25_000;
 
 /** Which of the optional hazards/mechanics below are active for a given run. Purely a matter of which rules
  * were in force — never randomness, never anything that could differ between two replays of the same code —
@@ -179,6 +189,10 @@ export type RunState = Readonly<{
   // Power-up/hazard state, all purely additive on top of the base run above: zero/false for every one of
   // these reproduces the exact pre-FC4 behavior, which is what rules.powerups/rules.drones=false rely on.
   rocketTicks: number; shield: boolean; magnetTicks: number; droneCooldown: number;
+  // True exactly when the run ended by reaching SUMMIT_SCORE rather than by falling — alive is false either
+  // way once a run is over, so this is what tells a win and a fall apart. tick at that point is the climb's
+  // own deterministic time (tick / 60 seconds), never a wall-clock reading.
+  summited: boolean;
 }>;
 
 export function startRun(): RunState {
@@ -186,7 +200,7 @@ export function startRun(): RunState {
     tick: 0, x: WORLD_WIDTH / 2, height: 0, vx: 0, vy: BOUNCE_VELOCITY,
     peakHeight: 0, stars: 0, starPoints: 0, comboStreak: 0,
     broken: new Set<number>(), starsCollected: new Set<number>(), alive: true,
-    rocketTicks: 0, shield: false, magnetTicks: 0, droneCooldown: 0,
+    rocketTicks: 0, shield: false, magnetTicks: 0, droneCooldown: 0, summited: false,
   });
 }
 
@@ -301,10 +315,15 @@ export function step(tower: Tower, state: RunState, dir: Dir, rules: RunRules = 
     finalHeight = floor + 1; finalVy = BOUNCE_VELOCITY;
   }
   const finalPeak = Math.max(peakHeight, finalHeight);
+  // A summit ends the run as a win, not a fall — checked after the shield save above so a save that happens
+  // to also cross the summit score still counts (the Friend is alive and has the score, nothing more to ask).
+  // Once summited the run freezes exactly like death does (step() returns the frozen state unchanged on any
+  // further call, via the !state.alive check at the top), so tick effectively becomes the climb's own time.
+  const summited = Math.floor(finalPeak / HEIGHT_PER_POINT) + starPoints >= SUMMIT_SCORE;
 
   return Object.freeze({
     tick: state.tick + 1, x, height: finalHeight, vx, vy: finalVy, peakHeight: finalPeak, stars, starPoints, comboStreak,
-    broken, starsCollected, alive,
+    broken, starsCollected, alive: alive && !summited, summited,
     rocketTicks, shield, magnetTicks, droneCooldown,
   });
 }
@@ -378,16 +397,19 @@ export function botRun(seed: number, maxTicks = 60 * 180, rules: RunRules = DEFA
   return { transitions, result: Object.freeze({ ticks: state.tick, state, score: scoreOf(state) }) };
 }
 
-// --- A short text code for sharing a run: "FC4.<rules digit><seed base36>.<tokens>!<score base36>". ---
+// --- A short text code for sharing a run: "FC5.<rules digit><seed base36>.<tokens>!<score base36>". ---
 // Each token is "<ticks since the previous change, base36><L|N|R>". Direction letters are uppercase and base36
 // digits are lowercase, so a single regex splits tokens unambiguously without a separator between them.
 //
-// The version number has moved three times now, each time because the same seed and transitions started
+// The version number has moved four times now, each time because the same seed and transitions started
 // replaying to a different score than before: FC1 -> FC2 fixed a star paying out on every repeat bounce
 // instead of once; FC2 -> FC3 added springs and the star combo bonus; FC3 -> FC4 added the chase, drones and
-// power-ups, which also change scoring/survival outright and introduced RunRules (see its own comment) as a
-// new thing a code has to carry. All three old prefixes are refused by name instead of silently replaying to
-// a number that no longer matches what the code claims.
+// power-ups (and introduced RunRules, see its own comment, as a new thing a code has to carry); FC4 -> FC5
+// added the summit (SUMMIT_SCORE) as a second way a run can end, and lowered DRONE_START_HEIGHT/DRONE_SPACING
+// (a tuning fix to tower generation itself, which shifts the seeded random() sequence for everything
+// generated after a tower's first drone, same as FC2 -> FC3 silently reshaping towers when spring/power-up
+// fields were added). All four old prefixes are refused by name instead of silently replaying to a number
+// that no longer matches what the code claims.
 const TOKEN = /([0-9a-z]+)([LNR])/g;
 const LETTER: Record<Dir, "L" | "N" | "R"> = { [-1]: "L", 0: "N", 1: "R" };
 const DIR_OF: Record<string, Dir> = { L: -1, N: 0, R: 1 };
@@ -406,7 +428,7 @@ export function encodeRun(seed: number, transitions: readonly Transition[], scor
     previous = tick;
     return token;
   });
-  return `FC4.${rulesToFlags(rules)}${seed.toString(36)}.${tokens.join("")}!${score.toString(36)}`;
+  return `FC5.${rulesToFlags(rules)}${seed.toString(36)}.${tokens.join("")}!${score.toString(36)}`;
 }
 
 export type DecodedRun = Readonly<{ seed: number; transitions: readonly Transition[]; claimedScore: number; rules: RunRules }>;
@@ -422,7 +444,10 @@ export function decodeRun(code: string): DecodedRun {
   if (/^FC3\./.test(trimmed)) {
     throw new Error("That run code is from an older version of Friend Climb (before the chase, drones and power-ups) and can no longer be replayed.");
   }
-  const match = /^FC4\.([0-7])([0-9a-z]+)\.([0-9a-zLNR]*)!([0-9a-z]+)$/.exec(trimmed);
+  if (/^FC4\./.test(trimmed)) {
+    throw new Error("That run code is from an older version of Friend Climb (before the summit, and with a different drone layout) and can no longer be replayed.");
+  }
+  const match = /^FC5\.([0-7])([0-9a-z]+)\.([0-9a-zLNR]*)!([0-9a-z]+)$/.exec(trimmed);
   if (!match) throw new Error("That run code does not look like a Friend Climb code.");
   const [, flagsPart, seedPart, tokenPart, scorePart] = match;
   const transitions: Transition[] = [];

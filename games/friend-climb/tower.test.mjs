@@ -60,23 +60,25 @@ test("a run code carries which optional mechanics were active, round-tripping ex
 
 test("decoding rejects text that is not a Friend Climb code", () => {
   assert.throws(() => tower.decodeRun("not a code"), /does not look like/);
-  assert.throws(() => tower.decodeRun("FC4.75.3L!x!y"), /does not look like/);
+  assert.throws(() => tower.decodeRun("FC5.75.3L!x!y"), /does not look like/);
   // "LL" is inside the loose outer shape (only 0-9, a-z, L, N, R are allowed) but has no digits before
   // either letter, so the token scanner can match neither — exercises the leftover-character check.
-  assert.throws(() => tower.decodeRun("FC4.75.LL!a"), /unreadable characters/);
+  assert.throws(() => tower.decodeRun("FC5.75.LL!a"), /unreadable characters/);
 });
 
 test("decoding rejects an old code by name instead of silently replaying it to a different score", () => {
   // v1 (FC1) paid out a star on every bounce off a star platform, not once; v2 (FC2) had no springs or combo
-  // bonus; v3 (FC3) had no chase, drones or power-ups. None of their claimed scores are reproducible under
-  // the current logic, so all three must be refused with their own specific message, not treated as generic
-  // garbage or replayed to a wrong number.
+  // bonus; v3 (FC3) had no chase, drones or power-ups; v4 (FC4) had no summit and a different drone layout.
+  // None of their claimed scores are reproducible under the current logic, so all four must be refused with
+  // their own specific message, not treated as generic garbage or replayed to a wrong number.
   assert.throws(() => tower.decodeRun("FC1.5.3L!a"), /older version/);
   assert.throws(() => tower.decodeRun("FC1.5.3L!a"), error => !/does not look like/.test(error.message));
   assert.throws(() => tower.decodeRun("FC2.5.3L!a"), /older version/);
   assert.throws(() => tower.decodeRun("FC2.5.3L!a"), error => !/does not look like/.test(error.message));
   assert.throws(() => tower.decodeRun("FC3.5.3L!a"), /older version/);
   assert.throws(() => tower.decodeRun("FC3.5.3L!a"), error => !/does not look like/.test(error.message));
+  assert.throws(() => tower.decodeRun("FC4.5.3L!a"), /older version/);
+  assert.throws(() => tower.decodeRun("FC4.5.3L!a"), error => !/does not look like/.test(error.message));
 });
 
 test("a star only pays out once, even when the same platform is bounced on many times", () => {
@@ -363,4 +365,29 @@ test("a magnet collects a star the Friend's own path never actually lands on", (
   }
   assert.equal(withoutMagnet.stars, 0, "the star is offset far enough that a normal landing must never reach it");
   assert(withMagnet.stars >= 1, "a magnet must auto-collect the same star without ever landing on it");
+});
+
+test("reaching SUMMIT_SCORE ends the run as a win, not a fall, and freezes state there", () => {
+  // Crafted right at the edge of the summit score, same style as the shield test above: isolates the
+  // transition itself instead of needing a multi-minute scripted climb to actually reach 25000.
+  const emptyTower = Object.freeze({ seed: 0, windBands: Object.freeze([]), drones: Object.freeze([]), platforms: Object.freeze([]) });
+  const rules = { chase: false, drones: false, powerups: false };
+  // A large vy so a single physics tick's rise (dt * vy) is comfortably more than one HEIGHT_PER_POINT step —
+  // floor(height / HEIGHT_PER_POINT) only ever changes by whole steps, so a small vy could land mid-step and
+  // never actually cross from 24999 to 25000 in one tick.
+  const justBelow = (tower.SUMMIT_SCORE - 1) * tower.HEIGHT_PER_POINT + 5;
+  let state = { ...tower.startRun(), peakHeight: justBelow, height: justBelow, vy: 1000 };
+  state = tower.step(emptyTower, state, 0, rules);
+  assert.equal(state.summited, true, "crossing SUMMIT_SCORE must set summited");
+  assert.equal(state.alive, false, "a summited run is over, same as alive would be false on a fall");
+  const summitedState = state;
+  state = tower.step(emptyTower, state, 0, rules);
+  assert.deepEqual(state, summitedState, "step() on an already-summited (not alive) state must be a no-op, same as on a fallen one");
+});
+
+test("a run that never reaches SUMMIT_SCORE ends as a fall, not a win", () => {
+  for (const seed of [1, 2, 3]) {
+    const { result } = tower.botRun(seed);
+    assert.equal(result.state.summited, false, `seed ${seed}: the bot should not be reaching the summit at this score (${result.score})`);
+  }
 });
